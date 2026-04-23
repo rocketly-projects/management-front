@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideLeft {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+@theme inline {
+  --color-sidebar: #1a1f2e;
+  --color-sidebar-dark: #0f1420;
+  --color-accent: #4f6ef7;
+  --color-main-bg: #f7f8fb;
+  --color-muted: #8892b0;
+  --color-card-border: #e5e7eb;
+  --color-foreground: #111827;
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
