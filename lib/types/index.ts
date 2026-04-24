@@ -91,6 +91,53 @@ export interface Gasto {
   createdAt: string;
 }
 
+// ── Reporte types ───────────────────────────────────────────────
+
+export interface DashboardReporte {
+  hoy: {
+    totalFact: number;
+    cantVentas: number;
+    ticketPromedio: number;
+    anuladasCount: number;
+    totalAnulado: number;
+  };
+  ayer: {
+    totalFact: number;
+    cantVentas: number;
+    ticketPromedio: number;
+    anuladasCount: number;
+  };
+  ventasPorHora: Array<{ hora: number; total: number; cantidad: number }>;
+  topProductos: Array<{ productoId: string; nombre: string; unidades: number; total: number }>;
+}
+
+export interface CierreCajaReporte {
+  totales: {
+    totalFact: number;
+    cantVentas: number;
+    ticketPromedio: number;
+    anuladasCount: number;
+    totalAnulado: number;
+  };
+  porMetodo: Array<{ metodoPago: MetodoPago; total: number; cantidad: number }>;
+  topProductos: Array<{ productoId: string; nombre: string; unidades: number; total: number }>;
+  comparativoSemanal: {
+    dias: Array<{ fecha: string; total: number }>;
+    totalSemana: number;
+    promedio: number;
+  };
+}
+
+export interface ComparativoSemanal {
+  dias: Array<{ fecha: string; total: number }>;
+  totalSemana: number;
+  promedio: number;
+}
+
+export interface VentasAgregadasHora   { hora: number; total: number; cantidad: number }
+export interface VentasAgregadasDia    { fecha: string; total: number; cantidad: number }
+export interface VentasAgregadasMetodo { metodoPago: MetodoPago; total: number; cantidad: number; porcentaje: number }
+
 // API response wrappers
 export interface PaginatedResponse<T> {
   data: T[];

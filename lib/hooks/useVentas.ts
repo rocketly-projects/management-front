@@ -10,6 +10,8 @@ export interface VentasFiltros {
   limit?: number;
   estado?: EstadoVenta;
   cajaId?: string;
+  desde?: string;
+  hasta?: string;
 }
 
 export function useVentas(filtros: VentasFiltros = {}) {

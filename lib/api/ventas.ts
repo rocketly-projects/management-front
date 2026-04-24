@@ -6,6 +6,8 @@ export interface VentaFilters {
   limit?: number;
   estado?: EstadoVenta;
   cajaId?: string;
+  desde?: string;
+  hasta?: string;
 }
 
 export interface CreateVentaPayload {
@@ -21,6 +23,8 @@ export function getVentas(filters?: VentaFilters) {
   if (filters?.limit) params.set("limit", String(filters.limit));
   if (filters?.estado) params.set("estado", filters.estado);
   if (filters?.cajaId) params.set("cajaId", filters.cajaId);
+  if (filters?.desde)  params.set("desde",  filters.desde);
+  if (filters?.hasta)  params.set("hasta",  filters.hasta);
   const qs = params.toString();
   return apiFetch<PaginatedResponse<Venta>>(`/ventas${qs ? `?${qs}` : ""}`);
 }

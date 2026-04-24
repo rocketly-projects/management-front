@@ -1,142 +1,178 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useVentas } from "@/lib/hooks/useVentas";
+import { useVentasAgregadas } from "@/lib/hooks/useVentasAgregadas";
+import { getVenta, anularVenta } from "@/lib/api/ventas";
+import { ApiError } from "@/lib/api/client";
+import type { Venta, MetodoPago, EstadoVenta } from "@/lib/types";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
-interface Sale {
-  id: string;
-  t: string;
-  items: string[];
-  qty: number;
-  total: number;
-  pay: PayKey;
-  st: StatusKey;
-  user: UserKey;
-}
-
-type PayKey    = "efectivo" | "debito" | "credito" | "transf" | "mp";
-type StatusKey = "completa" | "anulada" | "devuelta";
-type UserKey   = "DL" | "SM" | "AC";
 type DateRange = "hoy" | "ayer" | "semana" | "mes";
 
 /* ── Config ────────────────────────────────────────────────────── */
 
-const PAYMENTS: Record<PayKey, { label: string; color: string; bg: string; border: string }> = {
-  efectivo: { label: "Efectivo",      color: "#047857", bg: "rgba(16,185,129,.12)", border: "rgba(16,185,129,.25)" },
-  debito:   { label: "Débito",        color: "#1e40af", bg: "rgba(59,130,246,.12)", border: "rgba(59,130,246,.25)" },
-  credito:  { label: "Crédito",       color: "#6d28d9", bg: "rgba(139,92,246,.12)", border: "rgba(139,92,246,.25)" },
-  transf:   { label: "Transferencia", color: "#0e7490", bg: "rgba(6,182,212,.12)",  border: "rgba(6,182,212,.25)"  },
-  mp:       { label: "Mercado Pago",  color: "#075985", bg: "rgba(14,165,233,.14)", border: "rgba(14,165,233,.30)" },
+const PAYMENTS: Record<MetodoPago, { label: string; color: string; bg: string; border: string }> = {
+  EFECTIVO:        { label: "Efectivo",      color: "#047857", bg: "rgba(16,185,129,.12)", border: "rgba(16,185,129,.25)" },
+  TARJETA_DEBITO:  { label: "Débito",        color: "#1e40af", bg: "rgba(59,130,246,.12)", border: "rgba(59,130,246,.25)" },
+  TARJETA_CREDITO: { label: "Crédito",       color: "#6d28d9", bg: "rgba(139,92,246,.12)", border: "rgba(139,92,246,.25)" },
+  TRANSFERENCIA:   { label: "Transferencia", color: "#0e7490", bg: "rgba(6,182,212,.12)",  border: "rgba(6,182,212,.25)"  },
+  OTRO:            { label: "Mercado Pago",  color: "#075985", bg: "rgba(14,165,233,.14)", border: "rgba(14,165,233,.30)" },
 };
 
-const STATUS: Record<StatusKey, { label: string; color: string; dot: string }> = {
-  completa: { label: "Completada", color: "text-emerald-600", dot: "bg-emerald-500" },
-  anulada:  { label: "Anulada",    color: "text-red-500",     dot: "bg-red-500"     },
-  devuelta: { label: "Devuelta",   color: "text-amber-600",   dot: "bg-amber-400"   },
+const STATUS: Record<EstadoVenta, { label: string; color: string; dot: string }> = {
+  COMPLETADA: { label: "Completada", color: "text-emerald-600", dot: "bg-emerald-500" },
+  ANULADA:    { label: "Anulada",    color: "text-red-500",     dot: "bg-red-500"     },
 };
 
-const USERS: Record<UserKey, { name: string; color: string }> = {
-  DL: { name: "Diego López",    color: "#f43f5e" },
-  SM: { name: "Sofía Márquez",  color: "#10b981" },
-  AC: { name: "Ana Cavalli",    color: "#6366f1" },
-};
-
-/* ── Mock data ─────────────────────────────────────────────────── */
-
-const SALES: Sale[] = [
-  { id:"V-0049", t:"14:32", items:["Coca-Cola 500ml","Alfajor Havanna x1","Yerba La Merced 500g"],         qty:3, total:4270,  pay:"efectivo", st:"completa", user:"DL" },
-  { id:"V-0048", t:"14:28", items:["Cigarrillos Philip Morris","Encendedor Bic"],                          qty:2, total:3180,  pay:"debito",   st:"completa", user:"DL" },
-  { id:"V-0047", t:"14:21", items:["Pan lactal 540g","Queso cremoso 200g","Jamón cocido 250g","Tomate","Lechuga"], qty:5, total:9820,  pay:"credito",  st:"completa", user:"SM" },
-  { id:"V-0046", t:"14:15", items:["Agua mineral 500ml"],                                                 qty:1, total:420,   pay:"efectivo", st:"completa", user:"DL" },
-  { id:"V-0045", t:"14:04", items:["Cerveza Quilmes 1L x2","Papas Lays 90g","Maní salado 200g"],          qty:4, total:6750,  pay:"mp",       st:"completa", user:"DL" },
-  { id:"V-0044", t:"13:58", items:["Chicles Trident menta x3"],                                           qty:3, total:1950,  pay:"efectivo", st:"completa", user:"SM" },
-  { id:"V-0043", t:"13:49", items:["Dulce de leche 400g","Galletitas Oreo","Leche descremada 1L"],        qty:3, total:4910,  pay:"transf",   st:"devuelta", user:"SM" },
-  { id:"V-0042", t:"13:41", items:["Café Nescafé 100g"],                                                  qty:1, total:3540,  pay:"debito",   st:"completa", user:"AC" },
-  { id:"V-0041", t:"13:35", items:["Detergente Magistral","Lavandina Ayudín"],                            qty:2, total:2280,  pay:"efectivo", st:"completa", user:"AC" },
-  { id:"V-0040", t:"13:21", items:["Gaseosa Sprite 2.25L","Fideos Matarazzo","Salsa Pomì","Queso rallado"],qty:4, total:5620,  pay:"credito",  st:"anulada",  user:"DL" },
-  { id:"V-0039", t:"13:12", items:["Yogurt Serenito x4","Banana kilo"],                                  qty:5, total:3140,  pay:"efectivo", st:"completa", user:"DL" },
-  { id:"V-0038", t:"13:04", items:["Helado Frigor 1L","Cucurucho x6"],                                   qty:2, total:4890,  pay:"mp",       st:"completa", user:"SM" },
-];
-
-const KPI_DATA = [
-  { label: "Facturado hoy",  value: "$284.560", delta: "▲ 18,4% vs ayer", up: true,  spark: [20,14,17,11,12,6,9,3]  },
-  { label: "Ventas",         value: "127",      delta: "▲ +12 vs ayer",   up: true,  spark: [22,18,14,16,10,12,6,5]  },
-  { label: "Ticket promedio",value: "$2.241",   delta: "▲ 4,2%",          up: true,  spark: null                     },
-  { label: "Devoluciones",   value: "2",        delta: "$3.200 anulados",  up: false, spark: null,  warn: true         },
-];
-
-const TOP_PRODUCTS = [
-  { name: "Coca-Cola 500ml",      sub: "Bebidas",   qty: 42, val: 35700  },
-  { name: "Alfajor Havanna x1",   sub: "Golosinas", qty: 31, val: 37200  },
-  { name: "Cigarrillos Marlboro", sub: "Tabaco",    qty: 24, val: 60000  },
-  { name: "Chicles Trident",      sub: "Golosinas", qty: 18, val: 11700  },
-  { name: "Pan lactal 540g",      sub: "Panadería", qty: 14, val: 12600  },
-];
-
-const HEATMAP_HOURS = [8,9,10,11,12,13,14,15,16,17,18,19];
-const HEATMAP_INT   = [12,22,30,44,78,88,100,72,58,64,48,28];
+const HEATMAP_HOURS = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19];
+const PAGE_SIZE = 20;
 
 /* ── Helpers ───────────────────────────────────────────────────── */
 
-const fmt = (n: number) => "$ " + Math.round(n).toLocaleString("es-AR");
+const fmt    = (n: number) => "$ " + Math.round(n).toLocaleString("es-AR");
+const fmtNum = (n: number) => `#${String(n).padStart(4, "0")}`;
 
-function unitPrices(sale: Sale): number[] {
-  const avg = sale.total / sale.qty;
-  return sale.items.map((_, i) => {
-    const factor = [1.05, 0.9, 1.1, 0.95, 1.0, 0.85, 1.15][i % 7];
-    return Math.max(50, Math.round((avg * factor) / 10) * 10);
-  });
+function getDateRange(range: DateRange): { desde: string; hasta: string } {
+  const now        = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEnd   = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  if (range === "ayer") {
+    const start = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    return { desde: start.toISOString(), hasta: new Date(todayStart.getTime() - 1).toISOString() };
+  }
+  if (range === "semana") {
+    return { desde: new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), hasta: todayEnd.toISOString() };
+  }
+  if (range === "mes") {
+    return { desde: new Date(todayStart.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(), hasta: todayEnd.toISOString() };
+  }
+  // hoy
+  return { desde: todayStart.toISOString(), hasta: todayEnd.toISOString() };
+}
+
+function fmtDate(iso: string) {
+  const d = new Date(iso);
+  return (
+    d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit" }) +
+    " " +
+    d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
+  );
 }
 
 /* ── Page ─────────────────────────────────────────────────────── */
 
 export default function VentasPage() {
-  const [dateRange, setDateRange] = useState<DateRange>("hoy");
-  const [search, setSearch]       = useState("");
-  const [payFilter, setPayFilter] = useState<PayKey | "all">("all");
-  const [stFilter, setStFilter]   = useState<StatusKey | "all">("all");
-  const [userFilter, setUserFilter] = useState<UserKey | "all">("all");
-  const [drawer, setDrawer]       = useState<Sale | null>(null);
+  const [dateRange,   setDateRange]   = useState<DateRange>("hoy");
+  const [search,      setSearch]      = useState("");
+  const [payFilter,   setPayFilter]   = useState<MetodoPago | "all">("all");
+  const [stFilter,    setStFilter]    = useState<EstadoVenta | "all">("all");
+  const [currentPage, setCurrentPage] = useState(1);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Drawer state
+  const [drawerVentaId,  setDrawerVentaId]  = useState<string | null>(null);
+  const [drawerData,     setDrawerData]     = useState<Venta | null>(null);
+  const [drawerLoading,  setDrawerLoading]  = useState(false);
+  const [drawerError,    setDrawerError]    = useState<string | null>(null);
+  const [anularConfirm,  setAnularConfirm]  = useState(false);
+  const [anularLoading,  setAnularLoading]  = useState(false);
+  const [anularError,    setAnularError]    = useState<string | null>(null);
+
+  const { desde, hasta } = useMemo(() => getDateRange(dateRange), [dateRange]);
+
+  const { data: ventas, loading, error, refetch } = useVentas({ desde, hasta, limit: 200 });
+
+  const { data: metodosData, loading: metodosLoading } = useVentasAgregadas({ desde, hasta, agrupar: "metodo" });
+  const { data: horasData,   loading: horasLoading   } = useVentasAgregadas({ desde, hasta, agrupar: "hora"   });
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setCurrentPage(1); }, [search, payFilter, stFilter, dateRange]);
+
+  // Keyboard shortcuts
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        searchRef.current?.focus();
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); searchRef.current?.focus(); }
+      if (e.key === "Escape") {
+        if (anularConfirm) { setAnularConfirm(false); return; }
+        closeDrawer();
       }
-      if (e.key === "Escape") setDrawer(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anularConfirm]);
 
-  const visible = useMemo(() => {
+  // Fetch drawer detail on open
+  useEffect(() => {
+    if (!drawerVentaId) { setDrawerData(null); return; }
+    setDrawerLoading(true);
+    setDrawerError(null);
+    setAnularConfirm(false);
+    setAnularError(null);
+    getVenta(drawerVentaId)
+      .then(setDrawerData)
+      .catch((e) => setDrawerError(e instanceof ApiError ? e.message : "Error al cargar venta"))
+      .finally(() => setDrawerLoading(false));
+  }, [drawerVentaId]);
+
+  // Anular action
+  const handleAnular = useCallback(async () => {
+    if (!drawerVentaId) return;
+    setAnularLoading(true);
+    setAnularError(null);
+    try {
+      await anularVenta(drawerVentaId);
+      closeDrawer();
+      refetch();
+    } catch (e) {
+      setAnularError(e instanceof ApiError ? e.message : "Error al anular venta");
+    } finally {
+      setAnularLoading(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerVentaId, refetch]);
+
+  function closeDrawer() {
+    setDrawerVentaId(null);
+    setDrawerData(null);
+    setAnularConfirm(false);
+    setAnularError(null);
+  }
+
+  /* ── Derived ─────────────────────────────────────────────── */
+
+  const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return SALES.filter((s) => {
-      if (q && !s.id.toLowerCase().includes(q) && !s.items.join(" ").toLowerCase().includes(q)) return false;
-      if (payFilter !== "all" && s.pay !== payFilter) return false;
-      if (stFilter  !== "all" && s.st  !== stFilter)  return false;
-      if (userFilter !== "all" && s.user !== userFilter) return false;
+    return ventas.filter((v) => {
+      if (q && !fmtNum(v.numero).toLowerCase().includes(q)) return false;
+      if (payFilter !== "all" && v.metodoPago !== payFilter)  return false;
+      if (stFilter  !== "all" && v.estado     !== stFilter)   return false;
       return true;
     });
-  }, [search, payFilter, stFilter, userFilter]);
+  }, [ventas, search, payFilter, stFilter]);
 
-  // Payment breakdown
-  const payBreakdown = useMemo(() => {
-    const totals: Partial<Record<PayKey, number>> = {};
-    SALES.forEach((s) => { totals[s.pay] = (totals[s.pay] ?? 0) + s.total; });
-    const sum = Object.values(totals).reduce((a, b) => a + (b ?? 0), 0);
-    return (Object.keys(PAYMENTS) as PayKey[]).map((k) => ({
-      key: k, val: totals[k] ?? 0, pct: sum ? Math.round(((totals[k] ?? 0) / sum) * 100) : 0,
-    }));
-  }, []);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+  const kpis = useMemo(() => {
+    const completed  = ventas.filter((v) => v.estado === "COMPLETADA");
+    const anuladas   = ventas.filter((v) => v.estado === "ANULADA");
+    const totalFact  = completed.reduce((s, v) => s + v.total, 0);
+    const avgTicket  = completed.length ? totalFact / completed.length : 0;
+    const totalAnul  = anuladas.reduce((s, v) => s + v.total, 0);
+    return { totalFact, count: completed.length, avgTicket, anuladasCount: anuladas.length, totalAnul };
+  }, [ventas]);
+
+
+  /* ── Render ──────────────────────────────────────────────── */
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
 
-      {/* ── Page header ───────────────────────────────────────── */}
+      {/* ── Page header ─────────────────────────────────────── */}
       <header className="flex h-16 flex-shrink-0 items-center justify-between border-b border-card-border bg-white px-7">
         <div>
           <h1 className="text-[15px] font-bold text-foreground">Ventas</h1>
@@ -151,24 +187,43 @@ export default function VentasPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="p-7 space-y-5">
 
-          {/* ── KPI Row ─────────────────────────────────────── */}
+          {/* ── KPIs ──────────────────────────────────────────── */}
           <div className="grid grid-cols-4 gap-4">
-            {KPI_DATA.map((k, i) => <KPICard key={i} {...k} />)}
+            <KPICard
+              label="Facturado"
+              value={loading ? "…" : fmt(kpis.totalFact)}
+              sub={loading ? "—" : `${kpis.count} venta${kpis.count !== 1 ? "s" : ""} completada${kpis.count !== 1 ? "s" : ""}`}
+            />
+            <KPICard
+              label="Ticket promedio"
+              value={loading ? "…" : kpis.count > 0 ? fmt(kpis.avgTicket) : "—"}
+              sub="Por venta completada"
+            />
+            <KPICard
+              label="Anulaciones"
+              value={loading ? "…" : String(kpis.anuladasCount)}
+              sub={loading ? "—" : kpis.anuladasCount > 0 ? `${fmt(kpis.totalAnul)} anulados` : "Sin anulaciones"}
+              warn={kpis.anuladasCount > 0}
+            />
+            <KPICard
+              label="Total cargadas"
+              value={loading ? "…" : String(ventas.length)}
+              sub={ventas.length >= 200 ? "Límite alcanzado — acotá el período" : `del ${dateRange === "hoy" ? "día" : dateRange === "ayer" ? "día de ayer" : dateRange === "semana" ? "últimos 7 días" : "último mes"}`}
+              warn={ventas.length >= 200}
+            />
           </div>
 
-          {/* ── Filters ─────────────────────────────────────── */}
+          {/* ── Filters ───────────────────────────────────────── */}
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Date segmented */}
             <div className="flex items-center gap-0.5 rounded-lg border border-card-border bg-gray-100/70 p-1">
-              {(["hoy","ayer","semana","mes"] as DateRange[]).map((d) => {
-                const labels = { hoy:"Hoy", ayer:"Ayer", semana:"Semana", mes:"Mes" };
+              {(["hoy", "ayer", "semana", "mes"] as DateRange[]).map((d) => {
+                const labels = { hoy: "Hoy", ayer: "Ayer", semana: "Semana", mes: "Mes" };
                 return (
                   <button key={d} type="button" onClick={() => setDateRange(d)}
                           className={[
                             "rounded-md px-3 py-1 text-[12.5px] font-semibold transition-all",
-                            dateRange === d
-                              ? "bg-white text-foreground shadow-sm"
-                              : "text-muted hover:text-foreground",
+                            dateRange === d ? "bg-white text-foreground shadow-sm" : "text-muted hover:text-foreground",
                           ].join(" ")}>
                     {labels[d]}
                   </button>
@@ -182,7 +237,7 @@ export default function VentasPage() {
               <input
                 ref={searchRef}
                 type="text"
-                placeholder="Buscar #venta, producto…"
+                placeholder="Buscar #venta…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="h-9 w-full rounded-lg border border-card-border bg-white pl-9 pr-12 text-[13px] text-foreground placeholder:text-muted outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/15"
@@ -193,46 +248,37 @@ export default function VentasPage() {
             </div>
 
             {/* Método */}
-            <select value={payFilter} onChange={(e) => setPayFilter(e.target.value as PayKey | "all")}
+            <select value={payFilter} onChange={(e) => setPayFilter(e.target.value as MetodoPago | "all")}
                     className="h-9 rounded-lg border border-card-border bg-white px-3 text-[12.5px] font-semibold text-foreground outline-none cursor-pointer hover:border-gray-300 transition-colors">
               <option value="all">Método: Todos</option>
-              {(Object.keys(PAYMENTS) as PayKey[]).map((k) => (
+              {(Object.keys(PAYMENTS) as MetodoPago[]).map((k) => (
                 <option key={k} value={k}>{PAYMENTS[k].label}</option>
               ))}
             </select>
 
             {/* Estado */}
-            <select value={stFilter} onChange={(e) => setStFilter(e.target.value as StatusKey | "all")}
+            <select value={stFilter} onChange={(e) => setStFilter(e.target.value as EstadoVenta | "all")}
                     className="h-9 rounded-lg border border-card-border bg-white px-3 text-[12.5px] font-semibold text-foreground outline-none cursor-pointer hover:border-gray-300 transition-colors">
               <option value="all">Estado: Todos</option>
-              {(Object.keys(STATUS) as StatusKey[]).map((k) => (
+              {(Object.keys(STATUS) as EstadoVenta[]).map((k) => (
                 <option key={k} value={k}>{STATUS[k].label}</option>
               ))}
             </select>
 
-            {/* Usuario */}
-            <select value={userFilter} onChange={(e) => setUserFilter(e.target.value as UserKey | "all")}
-                    className="h-9 rounded-lg border border-card-border bg-white px-3 text-[12.5px] font-semibold text-foreground outline-none cursor-pointer hover:border-gray-300 transition-colors">
-              <option value="all">Usuario: Todos</option>
-              {(Object.keys(USERS) as UserKey[]).map((k) => (
-                <option key={k} value={k}>{USERS[k].name}</option>
-              ))}
-            </select>
-
             <span className="ml-auto text-xs text-muted">
-              <span className="font-bold text-foreground">{visible.length}</span> resultados
+              <span className="font-bold text-foreground">{filtered.length}</span> resultados
             </span>
           </div>
 
-          {/* ── Main grid ───────────────────────────────────── */}
+          {/* ── Main grid ─────────────────────────────────────── */}
           <div className="grid gap-4" style={{ gridTemplateColumns: "1fr 320px" }}>
 
             {/* Sales table */}
             <div className="overflow-hidden rounded-xl border border-card-border bg-white">
               {/* Table header */}
               <div className="grid items-center gap-3 border-b border-card-border bg-gray-50/80 px-5 py-0"
-                   style={{ gridTemplateColumns: "130px 1fr 130px 110px 130px 44px", height: 42 }}>
-                {["#Venta / Hora","Productos","Método","Estado","Total",""].map((h, i) => (
+                   style={{ gridTemplateColumns: "150px 1fr 150px 120px 130px 44px", height: 42 }}>
+                {["#Venta / Fecha", "Descuento", "Método", "Estado", "Total", ""].map((h, i) => (
                   <div key={i} className={`text-[10.5px] font-bold uppercase tracking-[.08em] text-muted ${i === 4 ? "text-right" : ""}`}>
                     {h}
                   </div>
@@ -240,25 +286,46 @@ export default function VentasPage() {
               </div>
 
               {/* Rows */}
-              <div className="divide-y divide-card-border">
-                {visible.length === 0 ? (
-                  <div className="py-12 text-center text-sm text-muted">Sin resultados</div>
-                ) : (
-                  visible.map((s) => (
-                    <SaleRow key={s.id} sale={s} onClick={() => setDrawer(s)} />
-                  ))
-                )}
-              </div>
+              {loading ? (
+                <div className="flex items-center justify-center py-16 text-sm text-muted">
+                  Cargando ventas…
+                </div>
+              ) : error ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm font-semibold text-red-600">{error}</p>
+                  <button onClick={refetch} className="mt-2 text-xs text-accent hover:underline">
+                    Reintentar
+                  </button>
+                </div>
+              ) : (
+                <div className="divide-y divide-card-border">
+                  {paginated.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-muted">Sin resultados</div>
+                  ) : (
+                    paginated.map((v) => (
+                      <SaleRow key={v.id} venta={v} onClick={() => setDrawerVentaId(v.id)} />
+                    ))
+                  )}
+                </div>
+              )}
 
               {/* Pagination */}
               <div className="flex items-center gap-2 border-t border-card-border px-5 py-3 text-[12.5px] text-muted">
-                <span>Mostrando <b className="text-foreground">{visible.length}</b> de <b className="text-foreground">{SALES.length}</b></span>
+                <span>
+                  Mostrando{" "}
+                  <b className="text-foreground">{Math.min(currentPage * PAGE_SIZE, filtered.length)}</b>{" "}
+                  de{" "}
+                  <b className="text-foreground">{filtered.length}</b>
+                </span>
                 <div className="ml-auto flex items-center gap-1.5">
-                  {[1,2,3].map((p) => (
-                    <button key={p} type="button"
-                            className={`flex h-7 w-7 items-center justify-center rounded-md border text-xs font-semibold transition-colors ${
-                              p === 1 ? "border-accent bg-accent text-white" : "border-card-border bg-white text-foreground hover:bg-gray-50"
-                            }`}>
+                  {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+                    <button key={p} type="button" onClick={() => setCurrentPage(p)}
+                            className={[
+                              "flex h-7 w-7 items-center justify-center rounded-md border text-xs font-semibold transition-colors",
+                              p === currentPage
+                                ? "border-accent bg-accent text-white"
+                                : "border-card-border bg-white text-foreground hover:bg-gray-50",
+                            ].join(" ")}>
                       {p}
                     </button>
                   ))}
@@ -268,55 +335,37 @@ export default function VentasPage() {
 
             {/* Right side stack */}
             <div className="flex flex-col gap-4">
+
               {/* Payment breakdown */}
               <div className="rounded-xl border border-card-border bg-white">
                 <div className="border-b border-card-border px-5 py-3.5">
                   <p className="text-[14px] font-bold text-foreground">Métodos de pago</p>
-                  <p className="text-xs text-muted">Participación del día</p>
+                  <p className="text-xs text-muted">Participación del período</p>
                 </div>
                 <div className="space-y-3 px-5 py-4">
-                  {payBreakdown.filter((p) => p.val > 0).map((p) => {
-                    const cfg = PAYMENTS[p.key];
-                    return (
-                      <div key={p.key}>
-                        <div className="mb-1 flex items-center justify-between text-[11px] font-semibold">
-                          <span style={{ color: cfg.color }}>{cfg.label}</span>
-                          <span className="font-mono text-foreground">{fmt(p.val)}</span>
+                  {metodosLoading ? (
+                    <p className="text-xs text-muted">Cargando…</p>
+                  ) : metodosData.length === 0 ? (
+                    <p className="text-xs text-muted">Sin ventas en el período</p>
+                  ) : (
+                    metodosData.map((row) => {
+                      const cfg = PAYMENTS[row.metodoPago];
+                      if (!cfg) return null;
+                      return (
+                        <div key={row.metodoPago}>
+                          <div className="mb-1 flex items-center justify-between text-[11px] font-semibold">
+                            <span style={{ color: cfg.color }}>{cfg.label}</span>
+                            <span className="font-mono text-foreground">{fmt(row.total)}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                            <div className="h-full rounded-full transition-all duration-300"
+                                 style={{ width: `${row.porcentaje}%`, background: cfg.color }} />
+                          </div>
+                          <p className="mt-0.5 text-right text-[10.5px] text-muted">{row.porcentaje}%</p>
                         </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-gray-100">
-                          <div className="h-full rounded-full transition-all duration-300"
-                               style={{ width: `${p.pct}%`, background: cfg.color }} />
-                        </div>
-                        <p className="mt-0.5 text-right text-[10.5px] text-muted">{p.pct}%</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Top products */}
-              <div className="rounded-xl border border-card-border bg-white">
-                <div className="border-b border-card-border px-5 py-3.5">
-                  <p className="text-[14px] font-bold text-foreground">Más vendidos hoy</p>
-                  <p className="text-xs text-muted">Top 5 por unidades</p>
-                </div>
-                <div className="px-5 py-1">
-                  {TOP_PRODUCTS.map((t, i) => (
-                    <div key={i} className="grid items-center gap-2.5 border-b border-dashed border-card-border py-2.5 last:border-b-0"
-                         style={{ gridTemplateColumns: "22px 1fr auto" }}>
-                      <span className="font-mono text-[11px] font-semibold text-muted">
-                        {String(i + 1).padStart(2, "0")}
-                      </span>
-                      <div>
-                        <p className="text-[13px] font-semibold leading-snug text-foreground">{t.name}</p>
-                        <p className="text-[11.5px] text-muted">{t.sub} · {t.qty} uds.</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-mono text-[12.5px] font-bold text-foreground">{fmt(t.val)}</p>
-                        <p className="text-[10.5px] text-muted">{(t.val / 284560 * 100).toFixed(1)}% día</p>
-                      </div>
-                    </div>
-                  ))}
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
@@ -327,20 +376,39 @@ export default function VentasPage() {
                   <p className="text-xs text-muted">Concentración de operaciones</p>
                 </div>
                 <div className="px-5 py-4">
-                  <div className="grid grid-cols-12 gap-1">
-                    {HEATMAP_INT.map((v, i) => (
-                      <div key={i} title={`${HEATMAP_HOURS[i]}h — ${v}%`}
-                           className="aspect-square rounded-sm transition-opacity"
-                           style={{ background: `rgba(79,110,247,${v / 100})` }} />
-                    ))}
-                  </div>
-                  <div className="mt-1.5 grid grid-cols-12 gap-1">
-                    {HEATMAP_HOURS.map((h) => (
-                      <div key={h} className="text-center font-mono text-[9.5px] text-muted">{h}h</div>
-                    ))}
-                  </div>
+                  {horasLoading ? (
+                    <p className="text-xs text-muted">Cargando…</p>
+                  ) : horasData.length === 0 ? (
+                    <p className="text-xs text-muted">Sin datos en el período</p>
+                  ) : (() => {
+                    const horasVisible = HEATMAP_HOURS;
+                    const maxCant = Math.max(...horasData.map((h) => h.cantidad), 1);
+                    const byHour = Object.fromEntries(horasData.map((h) => [h.hora, h.cantidad]));
+                    return (
+                      <>
+                        <div className="grid grid-cols-12 gap-1">
+                          {horasVisible.map((h) => {
+                            const cant = byHour[h] ?? 0;
+                            const pct  = Math.round((cant / maxCant) * 100);
+                            return (
+                              <div key={h}
+                                   title={`${h}h · ${cant} venta${cant !== 1 ? "s" : ""}`}
+                                   className="aspect-square rounded-sm"
+                                   style={{ background: `rgba(79,110,247,${Math.max(pct / 100, 0.06)})` }} />
+                            );
+                          })}
+                        </div>
+                        <div className="mt-1.5 grid grid-cols-12 gap-1">
+                          {horasVisible.map((h) => (
+                            <div key={h} className="text-center font-mono text-[9.5px] text-muted">{h}h</div>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
+
             </div>
           </div>
 
@@ -348,11 +416,21 @@ export default function VentasPage() {
       </div>
 
       {/* ── Detail drawer ─────────────────────────────────────── */}
-      {drawer && (
+      {drawerVentaId && (
         <>
-          <div className="fixed inset-0 z-30 bg-black/40 backdrop-blur-[2px]"
-               onClick={() => setDrawer(null)} />
-          <SaleDrawer sale={drawer} onClose={() => setDrawer(null)} />
+          <div className="fixed inset-0 z-30 bg-black/40 backdrop-blur-[2px]" onClick={closeDrawer} />
+          <SaleDrawer
+            data={drawerData}
+            loading={drawerLoading}
+            error={drawerError}
+            anularConfirm={anularConfirm}
+            anularLoading={anularLoading}
+            anularError={anularError}
+            onClose={closeDrawer}
+            onAnularRequest={() => setAnularConfirm(true)}
+            onAnularConfirm={handleAnular}
+            onAnularCancel={() => setAnularConfirm(false)}
+          />
         </>
       )}
     </div>
@@ -361,31 +439,31 @@ export default function VentasPage() {
 
 /* ── Sale row ──────────────────────────────────────────────────── */
 
-function SaleRow({ sale, onClick }: { sale: Sale; onClick: () => void }) {
-  const pay = PAYMENTS[sale.pay];
-  const st  = STATUS[sale.st];
-  const first = sale.items[0] ?? "";
-  const more  = sale.items.length > 1 ? ` +${sale.items.length - 1} más` : "";
+function SaleRow({ venta, onClick }: { venta: Venta; onClick: () => void }) {
+  const pay = PAYMENTS[venta.metodoPago];
+  const st  = STATUS[venta.estado];
 
   return (
     <div className="grid cursor-pointer items-center gap-3 px-5 py-3 transition-colors hover:bg-gray-50/80"
-         style={{ gridTemplateColumns: "130px 1fr 130px 110px 130px 44px" }}
+         style={{ gridTemplateColumns: "150px 1fr 150px 120px 130px 44px" }}
          onClick={onClick}>
-      {/* ID + time */}
+
+      {/* # + fecha */}
       <div>
-        <p className="font-mono text-[13px] font-semibold text-foreground">#{sale.id}</p>
-        <p className="text-[11.5px] text-muted">{sale.t}</p>
+        <p className="font-mono text-[13px] font-semibold text-foreground">{fmtNum(venta.numero)}</p>
+        <p className="text-[11.5px] text-muted">{fmtDate(venta.createdAt)}</p>
       </div>
 
-      {/* Products */}
+      {/* Descuento */}
       <div className="min-w-0">
-        <p className="truncate text-[13.5px] font-medium text-foreground">{first}{more}</p>
-        <p className="text-[12px] text-muted">
-          {sale.qty} unidades · Cajero: {USERS[sale.user].name.split(" ")[0]}
-        </p>
+        {venta.descuento > 0 ? (
+          <p className="text-[13px] font-semibold text-emerald-600">−{fmt(venta.descuento)}</p>
+        ) : (
+          <p className="text-[13px] text-muted/50">—</p>
+        )}
       </div>
 
-      {/* Payment pill */}
+      {/* Método */}
       <div>
         <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-semibold"
               style={{ color: pay.color, background: pay.bg, borderColor: pay.border }}>
@@ -394,7 +472,7 @@ function SaleRow({ sale, onClick }: { sale: Sale; onClick: () => void }) {
         </span>
       </div>
 
-      {/* Status */}
+      {/* Estado */}
       <div>
         <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold ${st.color}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
@@ -404,8 +482,7 @@ function SaleRow({ sale, onClick }: { sale: Sale; onClick: () => void }) {
 
       {/* Total */}
       <div className="text-right">
-        <p className="font-mono text-[14px] font-bold text-foreground">{fmt(sale.total)}</p>
-        <p className="text-[12px] text-muted">{sale.qty} items</p>
+        <p className="font-mono text-[14px] font-bold text-foreground">{fmt(venta.total)}</p>
       </div>
 
       {/* Menu */}
@@ -421,130 +498,180 @@ function SaleRow({ sale, onClick }: { sale: Sale; onClick: () => void }) {
 
 /* ── Sale drawer ───────────────────────────────────────────────── */
 
-function SaleDrawer({ sale, onClose }: { sale: Sale; onClose: () => void }) {
-  const pay    = PAYMENTS[sale.pay];
-  const st     = STATUS[sale.st];
-  const user   = USERS[sale.user];
-  const prices = unitPrices(sale);
-  const subtotal = sale.total / 1.21;
-  const tax      = sale.total - subtotal;
-  const disc     = sale.st === "devuelta" ? -Math.round(sale.total * 0.1) : 0;
-  const grandTotal = sale.total + disc;
+function SaleDrawer({
+  data, loading, error,
+  anularConfirm, anularLoading, anularError,
+  onClose, onAnularRequest, onAnularConfirm, onAnularCancel,
+}: {
+  data: Venta | null;
+  loading: boolean;
+  error: string | null;
+  anularConfirm: boolean;
+  anularLoading: boolean;
+  anularError: string | null;
+  onClose: () => void;
+  onAnularRequest: () => void;
+  onAnularConfirm: () => void;
+  onAnularCancel: () => void;
+}) {
+  const pay = data ? PAYMENTS[data.metodoPago] : null;
+  const st  = data ? STATUS[data.estado]       : null;
 
   return (
     <aside className="fixed right-0 top-0 z-40 flex h-full w-[460px] flex-col border-l border-card-border bg-white shadow-2xl"
            style={{ animation: "slideLeft 0.25s cubic-bezier(.2,.8,.2,1)" }}>
 
-      {/* Drawer head */}
+      {/* Head */}
       <div className="border-b border-card-border px-6 py-5">
         <div className="flex items-center gap-2.5">
-          {/* Pay pill */}
-          <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-semibold"
-                style={{ color: pay.color, background: pay.bg, borderColor: pay.border }}>
-            <span className="h-1.5 w-1.5 rounded-full" style={{ background: pay.color }} />
-            {pay.label}
-          </span>
-          {/* Status pill */}
-          <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold ${st.color}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
-            {st.label}
-          </span>
+          {pay && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-semibold"
+                  style={{ color: pay.color, background: pay.bg, borderColor: pay.border }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: pay.color }} />
+              {pay.label}
+            </span>
+          )}
+          {st && (
+            <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-semibold ${st.color}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />
+              {st.label}
+            </span>
+          )}
           <button type="button" onClick={onClose}
                   className="ml-auto rounded-md p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground">
             <IconX className="h-5 w-5" />
           </button>
         </div>
-        <h2 className="mt-2.5 font-mono text-[22px] font-bold text-foreground">#{sale.id}</h2>
-        <p className="mt-0.5 text-[13px] text-muted">
-          Hoy {sale.t} · {user.name} · Caja #1
-        </p>
+        <h2 className="mt-2.5 font-mono text-[22px] font-bold text-foreground">
+          {data ? fmtNum(data.numero) : "…"}
+        </h2>
+        {data && <p className="mt-0.5 text-[13px] text-muted">{fmtDate(data.createdAt)}</p>}
       </div>
 
-      {/* Drawer body */}
-      <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-
-        {/* Items */}
-        <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.1em] text-muted">Artículos</p>
-          <div className="overflow-hidden rounded-xl border border-card-border">
-            {sale.items.map((name, i) => (
-              <div key={i} className="grid items-center gap-2.5 border-b border-card-border px-3.5 py-2.5 last:border-b-0 text-[13px]"
-                   style={{ gridTemplateColumns: "36px 1fr auto auto" }}>
-                <span className="rounded-md bg-gray-100 px-2 py-0.5 text-center font-mono text-[12px] font-semibold text-foreground">
-                  1×
-                </span>
-                <div>
-                  <p className="font-semibold text-foreground">{name}</p>
-                  <p className="text-[11.5px] text-muted">SKU {779 + i * 7}{String(i).padStart(4, "0")}</p>
-                </div>
-                <span className="font-mono text-[12px] text-muted min-w-[72px] text-right">{fmt(prices[i])}</span>
-                <span className="font-mono text-[13px] font-bold text-foreground min-w-[88px] text-right">{fmt(prices[i])}</span>
-              </div>
-            ))}
-
-            {/* Totals */}
-            <div className="grid grid-cols-2 gap-y-1.5 border-t border-dashed border-card-border px-3.5 py-3.5 text-[12.5px]">
-              <span className="text-muted">Subtotal</span>
-              <span className="text-right font-mono font-semibold text-foreground">{fmt(subtotal)}</span>
-              {disc !== 0 && (
-                <>
-                  <span className="text-muted">Descuento</span>
-                  <span className="text-right font-mono font-semibold text-red-500">{fmt(disc)}</span>
-                </>
-              )}
-              <span className="text-muted">Impuestos (21%)</span>
-              <span className="text-right font-mono font-semibold text-foreground">{fmt(tax)}</span>
-              <span className="text-[14px] font-bold text-foreground">Total</span>
-              <span className="text-right font-mono text-[18px] font-bold text-foreground">{fmt(grandTotal)}</span>
-            </div>
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        {loading && (
+          <div className="flex items-center justify-center py-16 text-sm text-muted">
+            Cargando detalle…
           </div>
-        </div>
+        )}
+        {error && !loading && (
+          <p className="text-sm font-semibold text-red-600">{error}</p>
+        )}
+        {data && !loading && (
+          <div className="space-y-5">
 
-        {/* Details */}
-        <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.1em] text-muted">Detalles</p>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: "Cliente",      value: "Cliente ocasional",                 sub: "Sin CUIT registrado" },
-              { label: "Comprobante",  value: `Ticket B — 0001-${sale.id.replace("V-","0000")}`, sub: "Comprobante fiscal" },
-              { label: "Cajero",       value: user.name,                           sub: "Cajero", avatar: sale.user, color: user.color },
-              { label: "Canal",        value: "POS · Caja #1",                     sub: "Canal de venta" },
-            ].map((d) => (
-              <div key={d.label} className="rounded-xl border border-card-border p-3.5">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{d.label}</p>
-                <div className="mt-1 flex items-center gap-1.5">
-                  {d.avatar && (
-                    <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold text-white"
-                          style={{ background: d.color }}>
-                      {d.avatar}
+            {/* Items */}
+            {data.items && data.items.length > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.1em] text-muted">Artículos</p>
+                <div className="overflow-hidden rounded-xl border border-card-border">
+                  {data.items.map((item) => (
+                    <div key={item.id}
+                         className="grid items-center gap-2.5 border-b border-card-border px-3.5 py-2.5 last:border-b-0 text-[13px]"
+                         style={{ gridTemplateColumns: "40px 1fr auto auto" }}>
+                      <span className="rounded-md bg-gray-100 px-2 py-0.5 text-center font-mono text-[12px] font-semibold text-foreground">
+                        {item.cantidad}×
+                      </span>
+                      <div>
+                        <p className="font-semibold text-foreground">{item.producto?.nombre ?? "Producto"}</p>
+                        {item.producto?.sku && <p className="text-[11.5px] text-muted">{item.producto.sku}</p>}
+                      </div>
+                      <span className="font-mono text-[12px] text-muted min-w-[72px] text-right">
+                        {fmt(item.precioUnitario)}
+                      </span>
+                      <span className="font-mono text-[13px] font-bold text-foreground min-w-[88px] text-right">
+                        {fmt(item.subtotal)}
+                      </span>
+                    </div>
+                  ))}
+
+                  {/* Totals */}
+                  <div className="grid grid-cols-2 gap-y-1.5 border-t border-dashed border-card-border px-3.5 py-3.5 text-[12.5px]">
+                    <span className="text-muted">Subtotal</span>
+                    <span className="text-right font-mono font-semibold text-foreground">
+                      {fmt(data.total + data.descuento)}
                     </span>
-                  )}
-                  <p className="text-[13px] font-semibold text-foreground">{d.value}</p>
+                    {data.descuento > 0 && (
+                      <>
+                        <span className="text-muted">Descuento</span>
+                        <span className="text-right font-mono font-semibold text-emerald-600">
+                          −{fmt(data.descuento)}
+                        </span>
+                      </>
+                    )}
+                    <span className="text-[14px] font-bold text-foreground">Total</span>
+                    <span className="text-right font-mono text-[18px] font-bold text-foreground">
+                      {fmt(data.total)}
+                    </span>
+                  </div>
                 </div>
-                <p className="mt-0.5 text-[11.5px] text-muted">{d.sub}</p>
               </div>
-            ))}
+            )}
+
+            {/* Detail grid */}
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[.1em] text-muted">Detalles</p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: "Estado",  value: st?.label  ?? "—" },
+                  { label: "Método",  value: pay?.label ?? "—" },
+                  { label: "Total",   value: fmt(data.total) },
+                  { label: "Fecha",   value: fmtDate(data.createdAt) },
+                ].map((d) => (
+                  <div key={d.label} className="rounded-xl border border-card-border p-3.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{d.label}</p>
+                    <p className="mt-1 text-[13px] font-semibold text-foreground">{d.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
-        </div>
+        )}
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 border-t border-card-border px-6 py-4">
-        {[
-          { label: "Reimprimir", icon: <IconPrint className="h-4 w-4" /> },
-          { label: "Enviar",     icon: <IconSend  className="h-4 w-4" /> },
-        ].map((a) => (
-          <button key={a.label} type="button"
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-card-border bg-white py-2 text-sm font-semibold text-foreground transition-colors hover:bg-gray-50">
-            {a.icon}{a.label}
-          </button>
-        ))}
-        <button type="button"
-                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-100">
-          <IconRefund className="h-4 w-4" />
-          Anular
-        </button>
-      </div>
+      {data && !loading && (
+        <div className="flex-shrink-0 border-t border-card-border px-6 py-4">
+          {anularConfirm ? (
+            <div className="space-y-3">
+              <p className="text-[13px] font-semibold text-foreground">¿Confirmar anulación?</p>
+              <p className="text-[12px] text-muted">
+                Esta acción restaura el stock de todos los artículos y no se puede deshacer.
+              </p>
+              {anularError && (
+                <p className="text-[12px] font-semibold text-red-600">{anularError}</p>
+              )}
+              <div className="flex gap-2">
+                <button type="button" onClick={onAnularCancel}
+                        className="flex-1 rounded-lg border border-card-border bg-white py-2 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors">
+                  Cancelar
+                </button>
+                <button type="button" onClick={onAnularConfirm} disabled={anularLoading}
+                        className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60 transition-colors">
+                  {anularLoading ? "Anulando…" : "Sí, anular"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button type="button"
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-card-border bg-white py-2 text-sm font-semibold text-foreground transition-colors hover:bg-gray-50">
+                <IconPrint className="h-4 w-4" />
+                Reimprimir
+              </button>
+              {data.estado === "COMPLETADA" && (
+                <button type="button" onClick={onAnularRequest}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-100">
+                  <IconRefund className="h-4 w-4" />
+                  Anular
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </aside>
   );
 }
@@ -552,36 +679,17 @@ function SaleDrawer({ sale, onClose }: { sale: Sale; onClose: () => void }) {
 /* ── KPI Card ──────────────────────────────────────────────────── */
 
 function KPICard({
-  label, value, delta, up, spark, warn,
+  label, value, sub, warn,
 }: {
-  label: string; value: string; delta: string;
-  up: boolean; spark: number[] | null; warn?: boolean;
+  label: string; value: string; sub: string; warn?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-card-border bg-white p-4">
-      <div className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-[.08em] text-muted">
-        {label}
-      </div>
+    <div className="flex flex-col gap-2 rounded-xl border border-card-border bg-white p-4">
+      <p className="text-[12px] font-semibold uppercase tracking-[.08em] text-muted">{label}</p>
       <p className={`text-[24px] font-bold leading-none tracking-tight ${warn ? "text-amber-500" : "text-foreground"}`}>
         {value}
       </p>
-      <div className="flex items-end justify-between gap-2">
-        <span className={`text-[12px] font-medium ${up ? "text-emerald-600" : "text-amber-600"}`}>
-          {delta}
-        </span>
-        {spark && (
-          <svg width={72} height={26} viewBox="0 0 72 26" className="flex-shrink-0">
-            <polyline
-              points={spark.map((v, i) => `${i * (72 / (spark.length - 1))},${26 - (v / Math.max(...spark)) * 22}`).join(" ")}
-              fill="none"
-              stroke={up ? "#10b981" : "#4f6ef7"}
-              strokeWidth={1.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </div>
+      <p className="text-[12px] text-muted">{sub}</p>
     </div>
   );
 }
@@ -620,13 +728,6 @@ function IconPrint({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 5V2h8v3M4 11H3a1 1 0 01-1-1V7a1 1 0 011-1h10a1 1 0 011 1v3a1 1 0 01-1 1h-1M4 9h8v5H4z" />
-    </svg>
-  );
-}
-function IconSend({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 2l12 6-12 6V9.5l8-1.5-8-1.5V2z" />
     </svg>
   );
 }

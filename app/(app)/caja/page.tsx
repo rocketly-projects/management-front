@@ -97,6 +97,11 @@ export default function CajaPage() {
   const [focusedIdx, setFocusedIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Ensure products are loaded when entering the POS (refreshes stock levels)
+  useEffect(() => {
+    fetchProductos();
+  }, [fetchProductos]);
+
   /* ── Derived ─────────────────────────────────────────────── */
 
   const results = useMemo(() => {
