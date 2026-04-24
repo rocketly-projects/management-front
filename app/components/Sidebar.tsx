@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuthStore } from "@/lib/store/authStore";
+import { useRouter } from "next/navigation";
 
 const nav = [
   {
@@ -23,6 +25,13 @@ const nav = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { perfil, logout } = useAuthStore();
+  const router = useRouter();
+
+  function handleLogout() {
+    logout();
+    router.push("/login");
+  }
 
   return (
     <aside className="flex h-full w-60 flex-shrink-0 flex-col bg-sidebar">
@@ -71,8 +80,20 @@ export default function Sidebar() {
       {/* Workspace card */}
       <div className="m-3 rounded-xl bg-white/5 px-4 py-3">
         <p className="text-xs text-muted">Espacio de trabajo</p>
-        <p className="mt-0.5 text-sm font-medium text-white">Mi Negocio</p>
+        <p className="mt-0.5 text-sm font-medium text-white">
+          {perfil?.nombreNegocio ?? "Mi Negocio"}
+        </p>
       </div>
+
+      {/* Logout */}
+      <button
+        type="button"
+        onClick={handleLogout}
+        className="mx-3 mb-3 flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-white/5 hover:text-white"
+      >
+        <IconLogout className="h-4 w-4 flex-shrink-0" />
+        Cerrar sesión
+      </button>
     </aside>
   );
 }
@@ -124,6 +145,14 @@ function IconLock({ className }: { className?: string }) {
       <rect x="3" y="7.5" width="10" height="7" rx="1.5" />
       <path d="M5 7.5V5a3 3 0 016 0v2.5" />
       <circle cx="8" cy="11" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function IconLogout({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.5}>
+      <path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M11 11l3-3-3-3M14 8H6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

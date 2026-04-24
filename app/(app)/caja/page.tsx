@@ -1,12 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { useProductosStore } from "@/lib/store/productosStore";
+import { useCajaStore } from "@/lib/store/cajaStore";
+import { useAuthStore } from "@/lib/store/authStore";
+import { createVenta } from "@/lib/api/ventas";
+import { ApiError } from "@/lib/api/client";
+import type { MetodoPago } from "@/lib/types";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
 interface CatalogItem {
-  id: number; name: string; cat: string;
-  code: string; price: number; stock: number;
+  id: string; name: string; cat: string | null;
+  code: string | null; price: number; stock: number;
 }
 
 interface CartItem extends CatalogItem {
@@ -22,29 +28,31 @@ interface SaleModal {
   items: CartItem[];
 }
 
-/* ── Catalog ───────────────────────────────────────────────────── */
+/* ── Constants ─────────────────────────────────────────────────── */
 
-const CATALOG: CatalogItem[] = [
-  { id:1,  name:"Coca-Cola 500ml",       cat:"Bebidas",   code:"7790895001010", price:850,  stock:24 },
-  { id:2,  name:"Agua mineral 500ml",    cat:"Bebidas",   code:"7791337002068", price:420,  stock:18 },
-  { id:3,  name:"Sprite 1.5L",           cat:"Bebidas",   code:"7790895000914", price:1400, stock:8  },
-  { id:4,  name:"Alfajor Havanna x1",    cat:"Golosinas", code:"7791780000012", price:1200, stock:30 },
-  { id:5,  name:"Chicles Trident menta", cat:"Golosinas", code:"7622210024039", price:650,  stock:45 },
-  { id:6,  name:"Cigarrillos Marlboro",  cat:"Tabaco",    code:"5000159473139", price:2500, stock:3  },
-  { id:7,  name:"Pan lactal Bimbo",      cat:"Almacén",   code:"7792222000063", price:1150, stock:12 },
-  { id:8,  name:"Yerba Mate 500g",       cat:"Almacén",   code:"7791195001013", price:3200, stock:1  },
-  { id:9,  name:"Nescafé sachets x5",    cat:"Almacén",   code:"7613036742764", price:800,  stock:22 },
-  { id:10, name:"Medias lunas x4",       cat:"Panadería", code:"0000000000001", price:900,  stock:6  },
-  { id:11, name:"Flan casero",           cat:"Panadería", code:"0000000000002", price:750,  stock:4  },
-  { id:12, name:"Leche entera 1L",       cat:"Lácteos",   code:"7793100001013", price:1380, stock:15 },
-];
-
-const METHODS: Record<PayMethod, { label: string; kbd: string; color: string; bg: string; border: string }> = {
+const METHOD_DISPLAY: Record<PayMethod, { label: string; kbd: string; color: string; bg: string; border: string }> = {
   efectivo: { label:"Efectivo",      kbd:"F1", color:"#047857", bg:"rgba(16,185,129,.1)", border:"rgba(16,185,129,.4)" },
   debito:   { label:"Débito",        kbd:"F2", color:"#1e40af", bg:"rgba(59,130,246,.1)", border:"rgba(59,130,246,.4)" },
   credito:  { label:"Crédito",       kbd:"F3", color:"#6d28d9", bg:"rgba(139,92,246,.1)", border:"rgba(139,92,246,.4)" },
   transf:   { label:"Transferencia", kbd:"F4", color:"#0e7490", bg:"rgba(6,182,212,.1)",  border:"rgba(6,182,212,.4)"  },
   mp:       { label:"Mercado Pago",  kbd:"F5", color:"#075985", bg:"rgba(14,165,233,.12)", border:"rgba(14,165,233,.4)" },
+};
+
+const METHOD_MAP: Record<PayMethod, MetodoPago> = {
+  efectivo: "EFECTIVO",
+  debito:   "TARJETA_DEBITO",
+  credito:  "TARJETA_CREDITO",
+  transf:   "TRANSFERENCIA",
+  mp:       "OTRO",
+};
+
+const CAT_COLORS: Record<string, { bg: string; color: string }> = {
+  Bebidas:   { bg:"rgba(219,234,254,.7)", color:"#1d4ed8" },
+  Golosinas: { bg:"rgba(252,231,243,.7)", color:"#9d174d" },
+  Tabaco:    { bg:"rgba(254,243,199,.7)", color:"#92400e" },
+  Almacén:   { bg:"rgba(220,252,231,.7)", color:"#166534" },
+  Panadería: { bg:"rgba(255,237,213,.7)", color:"#9a3412" },
+  Lácteos:   { bg:"rgba(254,226,226,.7)", color:"#991b1b" },
 };
 
 const CASH_PRESETS = [500, 1000, 2000, 5000, 10000];
@@ -53,20 +61,35 @@ const CASH_PRESETS = [500, 1000, 2000, 5000, 10000];
 
 const fmtARS = (n: number) => `$${Math.round(n).toLocaleString("es-AR")}`;
 
-
 /* ── Page ─────────────────────────────────────────────────────── */
 
 export default function CajaPage() {
-  const clock = useClock();
+  const clock       = useClock();
+  const { cajaActiva, loading: cajaLoading, abrir } = useCajaStore();
+  const { productos, fetch: fetchProductos }         = useProductosStore();
+  const { perfil }                                   = useAuthStore();
+
+  // Derive searchable catalog from store
+  const catalog: CatalogItem[] = useMemo(
+    () => productos
+      .filter((p) => p.activo)
+      .map((p) => ({ id: p.id, name: p.nombre, cat: p.categoria, code: p.sku, price: p.precio, stock: p.stock })),
+    [productos]
+  );
 
   const [cart,        setCart]        = useState<CartItem[]>([]);
-  const [selectedRow, setSelectedRow] = useState<number | null>(null); // cartId
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [discount,    setDiscount]    = useState("");
   const [discType,    setDiscType]    = useState<DiscType>("pct");
   const [method,      setMethod]      = useState<PayMethod>("efectivo");
   const [cash,        setCash]        = useState("");
   const [modal,       setModal]       = useState<SaleModal | null>(null);
-  const [saleNum,     setSaleNum]     = useState(48);
+  const [submitting,  setSubmitting]  = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Caja open modal state
+  const [abrirLoading, setAbrirLoading] = useState(false);
+  const [abrirError,   setAbrirError]   = useState<string | null>(null);
 
   // Search state
   const [query,      setQuery]      = useState("");
@@ -79,10 +102,10 @@ export default function CajaPage() {
   const results = useMemo(() => {
     const q = query.toLowerCase();
     if (!q) return [];
-    return CATALOG.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.code.includes(q)
+    return catalog.filter(
+      (p) => p.name.toLowerCase().includes(q) || (p.code ?? "").includes(q)
     ).slice(0, 8);
-  }, [query]);
+  }, [query, catalog]);
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const discVal  = parseFloat(discount) || 0;
@@ -137,11 +160,10 @@ export default function CajaPage() {
 
   function removeItem(cartId: number) {
     setCart((prev) => {
-      const idx   = prev.findIndex((c) => c.cartId === cartId);
-      const next  = prev.filter((c) => c.cartId !== cartId);
+      const idx  = prev.findIndex((c) => c.cartId === cartId);
+      const next = prev.filter((c) => c.cartId !== cartId);
       if (next.length === 0) { setSelectedRow(null); return next; }
-      const newSel = next[Math.min(idx, next.length - 1)].cartId;
-      setSelectedRow(newSel);
+      setSelectedRow(next[Math.min(idx, next.length - 1)].cartId);
       return next;
     });
   }
@@ -151,22 +173,55 @@ export default function CajaPage() {
     setSelectedRow(null);
     setDiscount("");
     setCash("");
+    setSubmitError(null);
+  }
+
+  /* ── Caja guard ──────────────────────────────────────────── */
+
+  async function handleAbrirCaja(montoInicial: number) {
+    setAbrirLoading(true);
+    setAbrirError(null);
+    try {
+      await abrir(montoInicial);
+    } catch (e) {
+      setAbrirError(e instanceof ApiError ? e.message : "Error al abrir la caja");
+    } finally {
+      setAbrirLoading(false);
+    }
   }
 
   /* ── Payment ─────────────────────────────────────────────── */
 
-  function handleCobrar() {
-    if (cart.length === 0) return;
-    setModal({
-      num: saleNum, method, total, discAmt,
-      change: method === "efectivo" ? change : null,
-      items: cart,
-    });
+  async function handleCobrar() {
+    if (cart.length === 0 || !cajaActiva || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const venta = await createVenta({
+        items: cart.map((item) => ({ productoId: item.id, cantidad: item.qty })),
+        descuento: discAmt,
+        metodoPago: METHOD_MAP[method],
+        cajaId: cajaActiva.id,
+      });
+      setModal({
+        num: venta.numero,
+        method,
+        total: venta.total,
+        discAmt: venta.descuento,
+        change: method === "efectivo" ? cashAmt - venta.total : null,
+        items: cart,
+      });
+      // Refresh stocks after sale
+      fetchProductos();
+    } catch (e) {
+      setSubmitError(e instanceof ApiError ? e.message : "Error al procesar la venta");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleNuevaVenta() {
     clearCart();
-    setSaleNum((n) => n + 1);
     setModal(null);
     setTimeout(() => searchRef.current?.focus(), 100);
   }
@@ -180,26 +235,14 @@ export default function CajaPage() {
         if (e.key === "Escape") { handleNuevaVenta(); }
         return;
       }
-      // F-keys
       const fMap: Record<string, PayMethod> = { F1:"efectivo", F2:"debito", F3:"credito", F4:"transf", F5:"mp" };
       if (fMap[e.key]) { e.preventDefault(); setMethod(fMap[e.key]); return; }
       if (e.key === "F12" || (e.ctrlKey && e.key === "Enter")) { e.preventDefault(); handleCobrar(); return; }
-
-      if (tag === "INPUT") return; // let inputs handle their own
-
-      // Cart navigation
+      if (tag === "INPUT") return;
       if (cart.length === 0) return;
       const selIdx = cart.findIndex((c) => c.cartId === selectedRow);
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = Math.min(selIdx + 1, cart.length - 1);
-        setSelectedRow(cart[next].cartId);
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = Math.max(selIdx - 1, 0);
-        setSelectedRow(cart[prev].cartId);
-      }
+      if (e.key === "ArrowDown") { e.preventDefault(); setSelectedRow(cart[Math.min(selIdx + 1, cart.length - 1)].cartId); }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setSelectedRow(cart[Math.max(selIdx - 1, 0)].cartId); }
       if (selectedRow !== null) {
         if (e.key === "+" || e.key === "=") { e.preventDefault(); updateQty(selectedRow,  1); }
         if (e.key === "-")                  { e.preventDefault(); updateQty(selectedRow, -1); }
@@ -209,7 +252,7 @@ export default function CajaPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, selectedRow, modal, total, method]);
+  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting]);
 
   /* ── Search handlers ─────────────────────────────────────── */
 
@@ -224,7 +267,7 @@ export default function CajaPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-main-bg">
 
-      {/* ── POS Header (dark) ──────────────────────────────── */}
+      {/* ── POS Header ────────────────────────────────────── */}
       <div className="flex h-12 flex-shrink-0 items-center gap-4 bg-sidebar px-4">
         <div className="flex items-center gap-2">
           <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-[11px] font-extrabold text-white">R</div>
@@ -233,10 +276,9 @@ export default function CajaPage() {
         <div className="h-4 w-px bg-white/10" />
         <div className="flex items-center gap-2">
           <span className="font-mono text-[12px] font-semibold text-white/60">Venta</span>
-          <span className="font-mono text-[13px] font-bold text-white">#{String(saleNum).padStart(4,"0")}</span>
+          <span className="font-mono text-[13px] font-bold text-white">#{modal ? String(modal.num).padStart(4,"0") : "—"}</span>
         </div>
         <div className="font-mono text-[12px] font-semibold text-white/50">{clock}</div>
-
         <div className="ml-auto flex items-center gap-2">
           {(["F1","F2","F3","F4","F5","F12"] as const).map((k) => (
             <span key={k} className="rounded border border-white/15 bg-white/8 px-1.5 py-0.5 font-mono text-[10px] text-white/40">{k}</span>
@@ -248,6 +290,14 @@ export default function CajaPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Error bar ─────────────────────────────────────── */}
+      {submitError && (
+        <div className="flex items-center justify-between bg-red-600 px-5 py-2 text-[12.5px] font-semibold text-white">
+          {submitError}
+          <button type="button" onClick={() => setSubmitError(null)} className="text-white/70 hover:text-white">✕</button>
+        </div>
+      )}
 
       {/* ── Search bar ──────────────────────────────────────── */}
       <div className="relative flex-shrink-0 border-b border-card-border bg-white px-4 py-2.5">
@@ -277,7 +327,6 @@ export default function CajaPage() {
           </div>
         </div>
 
-        {/* Dropdown */}
         {dropOpen && results.length > 0 && (
           <div className="absolute left-4 right-4 top-full z-20 mt-1 overflow-hidden rounded-xl border border-card-border bg-white shadow-xl">
             {results.map((p, i) => (
@@ -285,12 +334,14 @@ export default function CajaPage() {
                    className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors ${i === focusedIdx ? "bg-accent/8" : "hover:bg-gray-50"}`}
                    onMouseEnter={() => setFocusedIdx(i)}
                    onMouseDown={() => addToCart(p)}>
-                <span className="rounded-md px-2 py-0.5 text-[10.5px] font-semibold"
-                      style={{ background: CAT_COLORS[p.cat]?.bg ?? "#f1f5f9", color: CAT_COLORS[p.cat]?.color ?? "#475569" }}>
-                  {p.cat}
-                </span>
+                {p.cat && (
+                  <span className="rounded-md px-2 py-0.5 text-[10.5px] font-semibold"
+                        style={{ background: CAT_COLORS[p.cat]?.bg ?? "#f1f5f9", color: CAT_COLORS[p.cat]?.color ?? "#475569" }}>
+                    {p.cat}
+                  </span>
+                )}
                 <span className="flex-1 text-[13.5px] font-semibold text-foreground">{p.name}</span>
-                <span className="font-mono text-[11px] text-muted">{p.code}</span>
+                {p.code && <span className="font-mono text-[11px] text-muted">{p.code}</span>}
                 <span className={`text-[11px] font-semibold ${p.stock <= 2 ? "text-red-500" : "text-emerald-600"}`}>
                   {p.stock} uds.
                 </span>
@@ -304,7 +355,7 @@ export default function CajaPage() {
         )}
         {dropOpen && query && results.length === 0 && (
           <div className="absolute left-4 right-4 top-full z-20 mt-1 rounded-xl border border-card-border bg-white px-4 py-4 text-center text-sm text-muted shadow-xl">
-            Sin resultados para "{query}"
+            Sin resultados para &ldquo;{query}&rdquo;
           </div>
         )}
       </div>
@@ -314,7 +365,6 @@ export default function CajaPage() {
 
         {/* Cart panel */}
         <div className="flex flex-1 flex-col overflow-hidden border-r border-card-border">
-          {/* Table header */}
           <div className="grid flex-shrink-0 items-center gap-3 border-b border-card-border bg-white px-4 py-2"
                style={{ gridTemplateColumns: "1fr 110px 90px 90px 36px" }}>
             {["Producto","Cantidad","Precio unit.","Subtotal",""].map((h, i) => (
@@ -322,7 +372,6 @@ export default function CajaPage() {
             ))}
           </div>
 
-          {/* Items */}
           <div className="flex-1 overflow-y-auto">
             {cart.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-muted">
@@ -344,12 +393,10 @@ export default function CajaPage() {
                          ].join(" ")}
                          style={{ gridTemplateColumns: "1fr 110px 90px 90px 36px" }}
                          onClick={() => setSelectedRow(item.cartId)}>
-                      {/* Name */}
                       <div>
                         <p className="text-[13.5px] font-semibold text-foreground">{item.name}</p>
-                        <p className="font-mono text-[11px] text-muted">{item.code}</p>
+                        {item.code && <p className="font-mono text-[11px] text-muted">{item.code}</p>}
                       </div>
-                      {/* Qty control */}
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <button type="button" onClick={() => updateQty(item.cartId, -1)}
                                 className="flex h-[26px] w-[26px] items-center justify-center rounded-md border border-card-border bg-white text-sm font-bold text-muted hover:bg-gray-50 transition-colors">
@@ -364,11 +411,8 @@ export default function CajaPage() {
                           +
                         </button>
                       </div>
-                      {/* Price */}
                       <div className="text-right font-mono text-[13px] text-muted">{fmtARS(item.price)}</div>
-                      {/* Subtotal */}
                       <div className="text-right font-mono text-[14px] font-bold text-foreground">{fmtARS(item.price * item.qty)}</div>
-                      {/* Delete */}
                       <div onClick={(e) => e.stopPropagation()}>
                         <button type="button" onClick={() => removeItem(item.cartId)}
                                 className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-red-50 hover:text-red-500 transition-colors">
@@ -382,7 +426,6 @@ export default function CajaPage() {
             )}
           </div>
 
-          {/* Cart footer hints */}
           <div className="flex flex-shrink-0 items-center gap-4 border-t border-card-border bg-white px-4 py-2 text-[11px] text-muted">
             <span className="font-semibold text-foreground">
               {cart.length} producto{cart.length !== 1 ? "s" : ""} · {cart.reduce((s, i) => s + i.qty, 0)} uds.
@@ -402,14 +445,11 @@ export default function CajaPage() {
         <div className="flex w-[380px] flex-shrink-0 flex-col overflow-y-auto bg-white">
           <div className="flex flex-1 flex-col gap-0 px-5 py-5 space-y-4">
 
-            {/* Summary */}
             <div className="space-y-2">
               <div className="flex justify-between text-[13px]">
                 <span className="text-muted">Subtotal</span>
                 <span className="font-mono font-semibold text-foreground">{fmtARS(subtotal)}</span>
               </div>
-
-              {/* Discount */}
               <div className="flex items-center gap-2">
                 <span className="text-[13px] text-muted">Descuento</span>
                 <div className="ml-auto flex items-center gap-1.5">
@@ -426,21 +466,15 @@ export default function CajaPage() {
                 </div>
               </div>
               {discAmt > 0 && (
-                <p className="text-right text-[12px] font-semibold text-emerald-600">
-                  Ahorro: −{fmtARS(discAmt)}
-                </p>
+                <p className="text-right text-[12px] font-semibold text-emerald-600">Ahorro: −{fmtARS(discAmt)}</p>
               )}
             </div>
 
-            {/* Total */}
             <div className="rounded-xl border-2 border-accent/20 bg-accent/5 px-4 py-3">
               <p className="mb-0.5 text-[11px] font-bold uppercase tracking-widest text-muted">Total</p>
-              <p className="font-mono text-[38px] font-extrabold leading-none tracking-tight text-accent">
-                {fmtARS(total)}
-              </p>
+              <p className="font-mono text-[38px] font-extrabold leading-none tracking-tight text-accent">{fmtARS(total)}</p>
             </div>
 
-            {/* Payment methods */}
             <div>
               <p className="mb-2 text-[11px] font-bold uppercase tracking-[.08em] text-muted">Método de pago</p>
               <div className="grid grid-cols-3 gap-2">
@@ -456,7 +490,6 @@ export default function CajaPage() {
               </div>
             </div>
 
-            {/* Cash input — only for efectivo */}
             {method === "efectivo" && (
               <div className="space-y-2">
                 <p className="text-[12px] font-semibold text-muted">Con cuánto paga</p>
@@ -486,15 +519,17 @@ export default function CajaPage() {
             )}
           </div>
 
-          {/* Cobrar button */}
           <div className="flex-shrink-0 border-t border-card-border p-4">
-            <button type="button" onClick={handleCobrar} disabled={cart.length === 0}
+            <button type="button" onClick={handleCobrar}
+                    disabled={cart.length === 0 || submitting || !cajaActiva}
                     className="relative w-full rounded-xl py-3.5 text-[18px] font-extrabold text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 hover:opacity-90 active:scale-[0.99]"
-                    style={{ background: cart.length > 0 ? "#4f6ef7" : undefined, boxShadow: cart.length > 0 ? "0 4px 14px rgba(79,110,247,.35)" : undefined }}>
-              Cobrar {total > 0 && fmtARS(total)}
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded border border-white/30 bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-bold">
-                F12
-              </span>
+                    style={{ background: (cart.length > 0 && !submitting && cajaActiva) ? "#4f6ef7" : undefined, boxShadow: (cart.length > 0 && !submitting) ? "0 4px 14px rgba(79,110,247,.35)" : undefined }}>
+              {submitting ? "Procesando…" : `Cobrar ${total > 0 ? fmtARS(total) : ""}`}
+              {!submitting && (
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded border border-white/30 bg-white/20 px-1.5 py-0.5 font-mono text-[10px] font-bold">
+                  F12
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -502,9 +537,13 @@ export default function CajaPage() {
 
       {/* ── Status bar ──────────────────────────────────────── */}
       <div className="flex h-6 flex-shrink-0 items-center gap-4 bg-sidebar px-4 text-[11px] text-white/40">
-        <StatusItem label="Comercio" value="Kiosco El Puente" />
-        <StatusItem label="Caja" value="Abierta" valueClass="text-emerald-400" />
-        <StatusItem label="Usuario" value="Diego" />
+        <StatusItem label="Comercio" value={perfil?.nombreNegocio ?? "—"} />
+        <StatusItem
+          label="Caja"
+          value={cajaLoading ? "Cargando…" : cajaActiva ? "Abierta" : "Cerrada"}
+          valueClass={cajaActiva ? "text-emerald-400" : "text-red-400"}
+        />
+        <StatusItem label="Usuario" value={perfil?.nombreDueno ?? "—"} />
         <div className="ml-auto flex items-center gap-3">
           {[["F1–F5","método pago"],["F12","cobrar"],["↑↓","navegar"],["+ −","cantidad"]].map(([k,l]) => (
             <span key={k} className="flex items-center gap-1">
@@ -515,8 +554,67 @@ export default function CajaPage() {
         </div>
       </div>
 
+      {/* ── Caja guard modal ─────────────────────────────────── */}
+      {!cajaLoading && !cajaActiva && (
+        <AbrirCajaModal
+          onAbrir={handleAbrirCaja}
+          loading={abrirLoading}
+          error={abrirError}
+        />
+      )}
+
       {/* ── Success modal ────────────────────────────────────── */}
       {modal && <SuccessModal sale={modal} onNuevaVenta={handleNuevaVenta} />}
+    </div>
+  );
+}
+
+/* ── Abrir caja modal ──────────────────────────────────────────── */
+
+function AbrirCajaModal({
+  onAbrir, loading, error,
+}: {
+  onAbrir: (monto: number) => void; loading: boolean; error: string | null;
+}) {
+  const [monto, setMonto] = useState("");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[3px]">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-sidebar">
+          <IconCash className="h-6 w-6 text-white" />
+        </div>
+        <h2 className="text-[18px] font-extrabold tracking-tight text-foreground">Abrí la caja primero</h2>
+        <p className="mt-1.5 text-[13.5px] font-medium leading-relaxed text-muted">
+          Ingresá el monto inicial de efectivo para comenzar el turno.
+        </p>
+        <div className="mt-5 space-y-2">
+          <label className="text-[11.5px] font-bold uppercase tracking-[.04em] text-foreground/60">
+            Monto inicial
+          </label>
+          <div className="relative">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-mono text-lg font-bold text-muted">$</span>
+            <input
+              type="number"
+              min={0}
+              value={monto}
+              onChange={(e) => setMonto(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onAbrir(parseFloat(monto) || 0)}
+              placeholder="0"
+              className="h-[52px] w-full rounded-xl border-2 border-card-border bg-white pl-9 font-mono text-[22px] font-extrabold text-foreground outline-none transition-all focus:border-accent focus:shadow-[0_0_0_3px_rgba(79,110,247,.12)]"
+              autoFocus
+            />
+          </div>
+          {error && <p className="text-sm font-semibold text-red-600">{error}</p>}
+        </div>
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => onAbrir(parseFloat(monto) || 0)}
+          className="mt-5 w-full rounded-xl bg-accent py-3.5 text-[15px] font-extrabold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {loading ? "Abriendo…" : "Abrir caja"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -526,12 +624,13 @@ export default function CajaPage() {
 function MethodBtn({ method, selected, onSelect, fullWidth }: {
   method: PayMethod; selected: boolean; onSelect: () => void; fullWidth?: boolean;
 }) {
-  const cfg = METHODS[method];
+  const cfg = METHOD_DISPLAY[method];
   return (
     <button type="button" onClick={onSelect}
             className={[
               "flex w-full items-center gap-2 rounded-xl border-2 px-3 py-2.5 transition-all",
               selected ? "shadow-sm" : "border-card-border bg-white hover:border-gray-300",
+              fullWidth ? "col-span-2" : "",
             ].join(" ")}
             style={selected ? { borderColor: cfg.border, background: cfg.bg } : undefined}>
       <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md"
@@ -551,7 +650,7 @@ function MethodBtn({ method, selected, onSelect, fullWidth }: {
 /* ── Success modal ─────────────────────────────────────────────── */
 
 function SuccessModal({ sale, onNuevaVenta }: { sale: SaleModal; onNuevaVenta: () => void }) {
-  const cfg = METHODS[sale.method];
+  const cfg   = METHOD_DISPLAY[sale.method];
   const shown = sale.items.slice(0, 4);
   const extra = sale.items.length - 4;
 
@@ -561,8 +660,6 @@ function SuccessModal({ sale, onNuevaVenta }: { sale: SaleModal; onNuevaVenta: (
       <div className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white shadow-2xl"
            onClick={(e) => e.stopPropagation()}
            style={{ animation: "fadeSlideIn .25s ease" }}>
-
-        {/* Header */}
         <div className="flex items-center gap-3 border-b border-card-border px-5 py-4">
           <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100">
             <IconCheck className="h-5 w-5 text-emerald-600" />
@@ -574,8 +671,6 @@ function SuccessModal({ sale, onNuevaVenta }: { sale: SaleModal; onNuevaVenta: (
             </p>
           </div>
         </div>
-
-        {/* Body */}
         <div className="px-5 py-4 space-y-2">
           {shown.map((item, i) => (
             <div key={i} className="flex justify-between text-[13px]">
@@ -601,14 +696,10 @@ function SuccessModal({ sale, onNuevaVenta }: { sale: SaleModal; onNuevaVenta: (
             </div>
           )}
         </div>
-
-        {/* Total */}
         <div className="flex items-center justify-between border-t border-b border-card-border px-5 py-3">
           <span className="text-[14px] font-bold text-foreground">Total cobrado</span>
           <span className="font-mono text-[28px] font-extrabold text-foreground">{fmtARS(sale.total)}</span>
         </div>
-
-        {/* Footer */}
         <div className="flex gap-2.5 px-5 py-4">
           <button type="button"
                   className="flex-1 rounded-xl border border-card-border py-2.5 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors">
@@ -637,18 +728,8 @@ function StatusItem({ label, value, valueClass = "text-white/70" }: {
   );
 }
 
-/* ── Category colors ───────────────────────────────────────────── */
-
-const CAT_COLORS: Record<string, { bg: string; color: string }> = {
-  Bebidas:    { bg:"rgba(219,234,254,.7)",  color:"#1d4ed8" },
-  Golosinas:  { bg:"rgba(252,231,243,.7)",  color:"#9d174d" },
-  Tabaco:     { bg:"rgba(254,243,199,.7)",  color:"#92400e" },
-  Almacén:    { bg:"rgba(220,252,231,.7)",  color:"#166534" },
-  Panadería:  { bg:"rgba(255,237,213,.7)",  color:"#9a3412" },
-  Lácteos:    { bg:"rgba(254,226,226,.7)",  color:"#991b1b" },
-};
-
 /* ── Clock hook ────────────────────────────────────────────────── */
+
 function useClock() {
   const [time, setTime] = useState("");
   useEffect(() => {
@@ -679,8 +760,7 @@ function IconX({ className }: { className?: string }) {
 function IconBag({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="7" width="20" height="14" rx="3" />
-      <path d="M8 7V5a4 4 0 018 0v2" />
+      <rect x="2" y="7" width="20" height="14" rx="3" /><path d="M8 7V5a4 4 0 018 0v2" />
     </svg>
   );
 }
@@ -695,6 +775,13 @@ function IconCheck({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 20 20" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 10l4.5 4.5L16 6" />
+    </svg>
+  );
+}
+function IconCash({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="6" width="20" height="13" rx="2" /><circle cx="12" cy="12" r="3" /><path d="M6 6V4M18 6V4" />
     </svg>
   );
 }

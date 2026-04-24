@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@/lib/hooks/useAuth";
 
 /* ── Constants ─────────────────────────────────────────────────── */
 
@@ -79,6 +80,7 @@ export default function OnboardingPage() {
     pais:          "Argentina",
     schedule:      DEFAULT_SCHEDULE,
   });
+  const { register, loading, error } = useAuth();
 
   function setField<K extends keyof FormData>(key: K, val: FormData[K]) {
     setForm((prev) => ({ ...prev, [key]: val }));
@@ -87,8 +89,27 @@ export default function OnboardingPage() {
   const progress = ((step + 1) / STEPS.length) * 100;
   const isLast   = step === STEPS.length - 1;
 
-  function handleNext() {
-    if (isLast) { setDone(true); return; }
+  async function handleNext() {
+    if (isLast) {
+      const direccion = [form.calle, form.ciudad, form.provincia, form.cp, form.pais]
+        .filter(Boolean)
+        .join(", ");
+      try {
+        await register({
+          email:         `${form.nombreNegocio.toLowerCase().replace(/\s+/g, ".")}@rocketly.app`,
+          password:      "cambiar123",
+          nombreNegocio: form.nombreNegocio,
+          nombreDueno:   form.nombreDueno || undefined,
+          telefono:      form.telefono || undefined,
+          taxId:         form.taxId || undefined,
+          direccion:     direccion || undefined,
+        });
+        setDone(true);
+      } catch {
+        // error displayed via `error` state
+      }
+      return;
+    }
     setStep((s) => s + 1);
   }
 
@@ -217,55 +238,61 @@ export default function OnboardingPage() {
         </div>
 
         {/* Sticky footer */}
-        <div className="flex flex-shrink-0 items-center justify-between border-t border-card-border bg-main-bg px-10 py-4">
-          {step > 0 ? (
+        <div className="flex-shrink-0 border-t border-card-border bg-main-bg">
+          {error && (
+            <div className="px-10 pt-3 text-sm text-red-600">{error}</div>
+          )}
+          <div className="flex items-center justify-between px-10 py-4">
+            {step > 0 ? (
+              <button
+                type="button"
+                onClick={handleBack}
+                className="flex items-center gap-1.5 rounded-[9px] border border-card-border bg-white px-[18px] py-2.5 text-[13.5px] font-bold text-foreground/60 transition-colors hover:border-gray-300"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 14 14"
+                     stroke="currentColor" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 1L3 7l6 6" />
+                </svg>
+                Atrás
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="text-sm font-semibold text-muted hover:text-foreground transition-colors"
+              >
+                ← Volver al login
+              </Link>
+            )}
+
+            <span className="text-[12.5px] font-semibold text-muted">
+              Paso <span className="font-extrabold text-foreground">{step + 1}</span>{" "}
+              de{" "}
+              <span className="font-extrabold text-foreground">{STEPS.length}</span>
+            </span>
+
             <button
               type="button"
-              onClick={handleBack}
-              className="flex items-center gap-1.5 rounded-[9px] border border-card-border bg-white px-[18px] py-2.5 text-[13.5px] font-bold text-foreground/60 transition-colors hover:border-gray-300"
+              onClick={handleNext}
+              disabled={loading}
+              className={[
+                "flex items-center gap-2 rounded-[9px] border-none px-7 py-3 text-sm font-extrabold text-white transition-colors disabled:opacity-60",
+                isLast
+                  ? "bg-sidebar hover:bg-sidebar-dark"
+                  : "bg-accent hover:bg-accent/90",
+              ].join(" ")}
+              style={{
+                boxShadow: isLast
+                  ? "0 3px 12px rgba(26,31,46,0.3)"
+                  : "0 3px 12px rgba(79,110,247,0.3)",
+              }}
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 14 14"
-                   stroke="currentColor" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 1L3 7l6 6" />
+              {isLast && loading ? "Creando..." : isLast ? "Crear mi comercio" : "Continuar"}
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 16 16"
+                   stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 8h10M9 3l5 5-5 5" />
               </svg>
-              Atrás
             </button>
-          ) : (
-            <Link
-              href="/login"
-              className="text-sm font-semibold text-muted hover:text-foreground transition-colors"
-            >
-              ← Volver al login
-            </Link>
-          )}
-
-          <span className="text-[12.5px] font-semibold text-muted">
-            Paso <span className="font-extrabold text-foreground">{step + 1}</span>{" "}
-            de{" "}
-            <span className="font-extrabold text-foreground">{STEPS.length}</span>
-          </span>
-
-          <button
-            type="button"
-            onClick={handleNext}
-            className={[
-              "flex items-center gap-2 rounded-[9px] border-none px-7 py-3 text-sm font-extrabold text-white transition-colors",
-              isLast
-                ? "bg-sidebar hover:bg-sidebar-dark"
-                : "bg-accent hover:bg-accent/90",
-            ].join(" ")}
-            style={{
-              boxShadow: isLast
-                ? "0 3px 12px rgba(26,31,46,0.3)"
-                : "0 3px 12px rgba(79,110,247,0.3)",
-            }}
-          >
-            {isLast ? "Crear mi comercio" : "Continuar"}
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 16 16"
-                 stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 8h10M9 3l5 5-5 5" />
-            </svg>
-          </button>
+          </div>
         </div>
       </div>
     </div>

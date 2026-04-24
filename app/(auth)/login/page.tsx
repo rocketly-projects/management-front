@@ -2,13 +2,22 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@/lib/hooks/useAuth";
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail]       = useState("");
+  const [password, setPassword] = useState("");
+  const { login, loading, error } = useAuth();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await login(email, password);
+  }
 
   return (
     <div className="flex h-full min-h-screen">
-      {/* ── Left panel ─────────────────────────────────────── */}
+      {/* ── Left panel ─────────────────────────────────────────────────── */}
       <div className="hidden w-[420px] flex-shrink-0 flex-col bg-sidebar p-10 lg:flex">
         {/* Brand */}
         <div className="flex items-center gap-3">
@@ -48,7 +57,7 @@ export default function LoginPage() {
         {/* Testimonial card */}
         <div className="mt-8 rounded-xl border border-white/10 bg-white/5 p-5">
           <p className="text-sm leading-relaxed text-white/80">
-            "Desde que usamos Rocketly, el cierre de caja tarda 5 minutos en lugar de una hora."
+            &ldquo;Desde que usamos Rocketly, el cierre de caja tarda 5 minutos en lugar de una hora.&rdquo;
           </p>
           <div className="mt-3 flex items-center gap-2.5">
             <div className="h-7 w-7 rounded-full bg-accent/30" />
@@ -60,7 +69,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* ── Right panel (form) ─────────────────────────────── */}
+      {/* ── Right panel (form) ─────────────────────────────────────────── */}
       <div className="flex flex-1 items-center justify-center bg-main-bg px-6 py-12">
         <div className="w-full max-w-md">
           {/* Mobile brand */}
@@ -83,8 +92,15 @@ export default function LoginPage() {
             </p>
           </div>
 
+          {/* Error banner */}
+          {error && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
           {/* Form */}
-          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+          <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
               <label
                 htmlFor="email"
@@ -97,7 +113,10 @@ export default function LoginPage() {
                 type="email"
                 autoComplete="email"
                 placeholder="tu@negocio.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border border-card-border bg-white px-4 py-3 text-sm text-foreground placeholder:text-muted outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/20"
+                required
               />
             </div>
 
@@ -122,7 +141,10 @@ export default function LoginPage() {
                   type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
                   placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="w-full rounded-xl border border-card-border bg-white px-4 py-3 pr-10 text-sm text-foreground placeholder:text-muted outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/20"
+                  required
                 />
                 <button
                   type="button"
@@ -137,9 +159,10 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              className="mt-2 w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80"
+              disabled={loading}
+              className="mt-2 w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-60"
             >
-              Ingresar
+              {loading ? "Ingresando..." : "Ingresar"}
             </button>
 
             <button
