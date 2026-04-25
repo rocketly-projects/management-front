@@ -36,6 +36,7 @@ const DEFAULT_SCHEDULE = DAYS.map((day, i) => ({
 
 const STEPS = [
   { title: "Datos del comercio", sub: "Nombre y rubro" },
+  { title: "Datos de acceso",    sub: "Email y contraseña" },
   { title: "Dirección",          sub: "Dónde estás ubicado" },
   { title: "Horarios",           sub: "Cuándo abrís" },
   { title: "Revisar y confirmar",sub: "Últimos detalles" },
@@ -47,11 +48,14 @@ interface ScheduleRow { day: string; open: boolean; from: string; to: string; }
 
 interface FormData {
   // Step 1 — Perfil / Tenant
-  nombreNegocio: string;
-  nombreDueno:   string;
-  rubro:         string;
-  taxId:         string;
-  telefono:      string;
+  nombreNegocio:   string;
+  nombreDueno:     string;
+  rubro:           string;
+  taxId:           string;
+  telefono:        string;
+  email:           string;
+  password:        string;
+  confirmPassword: string;
   // Step 2 — Dirección
   calle:     string;
   ciudad:    string;
@@ -68,18 +72,22 @@ export default function OnboardingPage() {
   const [step, setStep]   = useState(0);
   const [done, setDone]   = useState(false);
   const [form, setForm]   = useState<FormData>({
-    nombreNegocio: "",
-    nombreDueno:   "",
-    rubro:         "kiosco",
-    taxId:         "",
-    telefono:      "",
-    calle:         "",
-    ciudad:        "Buenos Aires",
-    provincia:     "Buenos Aires",
-    cp:            "",
-    pais:          "Argentina",
-    schedule:      DEFAULT_SCHEDULE,
+    nombreNegocio:   "",
+    nombreDueno:     "",
+    rubro:           "kiosco",
+    taxId:           "",
+    telefono:        "",
+    email:           "",
+    password:        "",
+    confirmPassword: "",
+    calle:           "",
+    ciudad:          "Buenos Aires",
+    provincia:       "Buenos Aires",
+    cp:              "",
+    pais:            "Argentina",
+    schedule:        DEFAULT_SCHEDULE,
   });
+  const [stepError, setStepError] = useState<string | null>(null);
   const { register, loading, error } = useAuth();
 
   function setField<K extends keyof FormData>(key: K, val: FormData[K]) {
@@ -90,14 +98,42 @@ export default function OnboardingPage() {
   const isLast   = step === STEPS.length - 1;
 
   async function handleNext() {
+    setStepError(null);
+
+    if (step === 0) {
+      if (!form.nombreNegocio.trim()) {
+        setStepError("El nombre del comercio es obligatorio.");
+        return;
+      }
+    }
+
+    if (step === 1) {
+      if (!form.email.trim()) {
+        setStepError("El email es obligatorio.");
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+        setStepError("Ingresá un email válido.");
+        return;
+      }
+      if (form.password.length < 8) {
+        setStepError("La contraseña debe tener al menos 8 caracteres.");
+        return;
+      }
+      if (form.password !== form.confirmPassword) {
+        setStepError("Las contraseñas no coinciden.");
+        return;
+      }
+    }
+
     if (isLast) {
       const direccion = [form.calle, form.ciudad, form.provincia, form.cp, form.pais]
         .filter(Boolean)
         .join(", ");
       try {
         await register({
-          email:         `${form.nombreNegocio.toLowerCase().replace(/\s+/g, ".")}@rocketly.app`,
-          password:      "cambiar123",
+          email:         form.email,
+          password:      form.password,
           nombreNegocio: form.nombreNegocio,
           nombreDueno:   form.nombreDueno || undefined,
           telefono:      form.telefono || undefined,
@@ -231,16 +267,17 @@ export default function OnboardingPage() {
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[560px] px-6 py-[52px]">
             {step === 0 && <Step1 form={form} setField={setField} />}
-            {step === 1 && <Step2 form={form} setField={setField} />}
-            {step === 2 && <Step3 form={form} setField={setField} />}
-            {step === 3 && <Step4 form={form} onEdit={setStep} />}
+            {step === 1 && <StepCredentials form={form} setField={setField} />}
+            {step === 2 && <Step2 form={form} setField={setField} />}
+            {step === 3 && <Step3 form={form} setField={setField} />}
+            {step === 4 && <Step4 form={form} onEdit={setStep} />}
           </div>
         </div>
 
         {/* Sticky footer */}
         <div className="flex-shrink-0 border-t border-card-border bg-main-bg">
-          {error && (
-            <div className="px-10 pt-3 text-sm text-red-600">{error}</div>
+          {(stepError || error) && (
+            <div className="px-10 pt-3 text-sm text-red-500">{stepError || error}</div>
           )}
           <div className="flex items-center justify-between px-10 py-4">
             {step > 0 ? (
@@ -310,7 +347,7 @@ function Step1({
 }) {
   return (
     <div>
-      <p className={eyebrow}>Paso 1 de 4</p>
+      <p className={eyebrow}>Paso 1 de 5</p>
       <h1 className={headline}>Contanos sobre tu comercio</h1>
       <p className={sub}>
         Tomará menos de un minuto. Estos datos aparecerán en tus tickets y reportes.
@@ -396,6 +433,104 @@ function Step1({
   );
 }
 
+/* ── Step Credentials: Datos de acceso ────────────────────────── */
+
+function StepCredentials({
+  form,
+  setField,
+}: {
+  form: FormData;
+  setField: <K extends keyof FormData>(k: K, v: FormData[K]) => void;
+}) {
+  const [showPwd, setShowPwd] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  return (
+    <div>
+      <p className={eyebrow}>Paso 2 de 5</p>
+      <h1 className={headline}>Creá tu acceso</h1>
+      <p className={sub}>
+        Con estos datos vas a iniciar sesión en Rocketly. Usá una contraseña segura.
+      </p>
+
+      <FormGroup label="Email" required htmlFor="email">
+        <input
+          id="email"
+          type="email"
+          className={inputCls}
+          placeholder="tu@email.com"
+          value={form.email}
+          onChange={(e) => setField("email", e.target.value)}
+          autoComplete="email"
+          autoFocus
+        />
+      </FormGroup>
+
+      <FormGroup label="Contraseña" required htmlFor="password">
+        <div className="relative">
+          <input
+            id="password"
+            type={showPwd ? "text" : "password"}
+            className={inputCls + " pr-10"}
+            placeholder="Mín. 8 caracteres"
+            value={form.password}
+            onChange={(e) => setField("password", e.target.value)}
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowPwd((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+          >
+            {showPwd ? (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </FormGroup>
+
+      <FormGroup label="Repetir contraseña" required htmlFor="confirmPassword">
+        <div className="relative">
+          <input
+            id="confirmPassword"
+            type={showConfirm ? "text" : "password"}
+            className={inputCls + " pr-10"}
+            placeholder="Repetí tu contraseña"
+            value={form.confirmPassword}
+            onChange={(e) => setField("confirmPassword", e.target.value)}
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowConfirm((v) => !v)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
+          >
+            {showConfirm ? (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </FormGroup>
+    </div>
+  );
+}
+
 /* ── Step 2: Dirección ────────────────────────────────────────── */
 
 function Step2({
@@ -407,7 +542,7 @@ function Step2({
 }) {
   return (
     <div>
-      <p className={eyebrow}>Paso 2 de 4</p>
+      <p className={eyebrow}>Paso 3 de 5</p>
       <h1 className={headline}>¿Dónde está tu comercio?</h1>
       <p className={sub}>
         Usamos la dirección para configurar la zona horaria y los reportes locales.
@@ -509,7 +644,7 @@ function Step3({
 
   return (
     <div>
-      <p className={eyebrow}>Paso 3 de 4</p>
+      <p className={eyebrow}>Paso 4 de 5</p>
       <h1 className={headline}>¿Cuándo abrís?</h1>
       <p className={sub}>
         Configurá los horarios de atención. Podés cambiarlos cuando quieras desde Configuración.
@@ -597,7 +732,7 @@ function Step4({
 
   return (
     <div>
-      <p className={eyebrow}>Paso 4 de 4</p>
+      <p className={eyebrow}>Paso 5 de 5</p>
       <h1 className={headline}>
         Todo listo, {form.nombreDueno || "bienvenido"}
       </h1>
@@ -612,10 +747,12 @@ function Step4({
         {form.nombreDueno && <ConfirmRow label="Responsable" value={form.nombreDueno} />}
         {form.telefono    && <ConfirmRow label="Teléfono"    value={form.telefono}    />}
         {form.taxId       && <ConfirmRow label="CUIT"        value={form.taxId}       />}
+        <ConfirmRow label="Email" value={form.email || <Empty />} />
+        <ConfirmRow label="Contraseña" value="••••••••" />
       </ConfirmCard>
 
       {/* Dirección */}
-      <ConfirmCard title="Dirección" onEdit={() => onEdit(1)}>
+      <ConfirmCard title="Dirección" onEdit={() => onEdit(2)}>
         <ConfirmRow
           label="Dirección"
           value={addressParts.length ? addressParts.join(", ") : <Empty />}
@@ -625,7 +762,7 @@ function Step4({
       </ConfirmCard>
 
       {/* Horarios */}
-      <ConfirmCard title={`Horarios — ${openDays.length} días abierto`} onEdit={() => onEdit(2)}>
+      <ConfirmCard title={`Horarios — ${openDays.length} días abierto`} onEdit={() => onEdit(3)}>
         {openDays.map((d, i) => (
           <ConfirmRow key={i} label={d.day} value={`${d.from} – ${d.to}`} />
         ))}
