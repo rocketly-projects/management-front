@@ -26,6 +26,7 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { perfil, logout } = useAuthStore();
+  console.log('perfil', perfil)
   const router = useRouter();
 
   function handleLogout() {
@@ -83,6 +84,9 @@ export default function Sidebar() {
         <p className="mt-0.5 text-sm font-medium text-white">
           {perfil?.nombreNegocio ?? "Mi Negocio"}
         </p>
+        {perfil?.nombreDueno && (
+          <p className="mt-0.5 text-xs text-muted">{perfil.nombreDueno}</p>
+        )}
       </div>
 
       {/* Logout */}

@@ -83,7 +83,7 @@ export default function VentasPage() {
 
   const { desde, hasta } = useMemo(() => getDateRange(dateRange), [dateRange]);
 
-  const { data: ventas, loading, error, refetch } = useVentas({ desde, hasta, limit: 200 });
+  const { data: ventas, loading, error, refetch } = useVentas({ desde, hasta, limit: 100 });
 
   const { data: metodosData, loading: metodosLoading } = useVentasAgregadas({ desde, hasta, agrupar: "metodo" });
   const { data: horasData,   loading: horasLoading   } = useVentasAgregadas({ desde, hasta, agrupar: "hora"   });
@@ -208,8 +208,8 @@ export default function VentasPage() {
             <KPICard
               label="Total cargadas"
               value={loading ? "…" : String(ventas.length)}
-              sub={ventas.length >= 200 ? "Límite alcanzado — acotá el período" : `del ${dateRange === "hoy" ? "día" : dateRange === "ayer" ? "día de ayer" : dateRange === "semana" ? "últimos 7 días" : "último mes"}`}
-              warn={ventas.length >= 200}
+              sub={ventas.length >= 100 ? "Límite alcanzado — acotá el período" : `del ${dateRange === "hoy" ? "día" : dateRange === "ayer" ? "día de ayer" : dateRange === "semana" ? "últimos 7 días" : "último mes"}`}
+              warn={ventas.length >= 100}
             />
           </div>
 

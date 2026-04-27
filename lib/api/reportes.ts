@@ -24,6 +24,12 @@ export function getComparativoSemanal(fechaFin?: string) {
   return apiFetch<ComparativoSemanal>(`/reportes/comparativo-semanal${qs}`);
 }
 
+/** Convierte cualquier string de fecha (ISO datetime o YYYY-MM-DD) a YYYY-MM-DD local. */
+function toDateStr(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function getVentasAgregadas(
   params: { desde: string; hasta: string; agrupar: "hora"; estado?: EstadoVenta }
 ): Promise<VentasAgregadasHora[]>;
@@ -39,7 +45,13 @@ export function getVentasAgregadas(params: {
   agrupar: "hora" | "dia" | "metodo";
   estado?: EstadoVenta;
 }): Promise<VentasAgregadasHora[] | VentasAgregadasDia[] | VentasAgregadasMetodo[]> {
-  const p = new URLSearchParams({ desde: params.desde, hasta: params.hasta, agrupar: params.agrupar });
+  const p = new URLSearchParams({
+    desde: toDateStr(params.desde),
+    hasta: toDateStr(params.hasta),
+    agrupar: params.agrupar,
+  });
   if (params.estado) p.set("estado", params.estado);
-  return apiFetch(`/reportes/ventas-agregadas?${p}`);
+  return apiFetch<{ agrupacion: string; data: VentasAgregadasHora[] | VentasAgregadasDia[] | VentasAgregadasMetodo[] }>(
+    `/reportes/ventas-agregadas?${p}`
+  ).then((res) => res.data);
 }
