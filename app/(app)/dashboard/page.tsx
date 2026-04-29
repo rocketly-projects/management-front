@@ -52,7 +52,7 @@ export default function DashboardPage() {
   // Fecha en formato YYYY-MM-DD (lo que espera el backend)
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
 
-  const { data: reporte, loading, error, refetch } = useDashboardReporte(today);
+  const { data: reporte, loading, error, isEmpty, refetch } = useDashboardReporte(today);
 
   // Cargar productos si no están (para alertas de stock)
   useEffect(() => {
@@ -138,30 +138,35 @@ export default function DashboardPage() {
           <div className="space-y-6">
 
             {/* KPI Cards */}
+            {isEmpty && (
+              <div className="rounded-xl border border-card-border bg-amber-50 px-5 py-3 text-[13px] font-medium text-amber-700">
+                Sin actividad registrada hoy — abrí una caja para comenzar a vender.
+              </div>
+            )}
             <div className="grid grid-cols-4 gap-4">
               <KPICard
                 label="Ventas de hoy"
-                value={loading ? "…" : fmt(reporte?.totalFacturado ?? 0)}
+                value={loading ? "…" : isEmpty ? "—" : fmt(reporte?.totalFacturado ?? 0)}
                 delta={reporte ? fmtDelta(reporte.deltas.totalFacturado) : null}
                 delay={0}
               />
               <KPICard
                 label="Cantidad de ventas"
-                value={loading ? "…" : String(reporte?.cantVentas ?? 0)}
+                value={loading ? "…" : isEmpty ? "—" : String(reporte?.cantVentas ?? 0)}
                 delta={reporte ? fmtDelta(reporte.deltas.cantVentas) : null}
                 delay={60}
               />
               <KPICard
                 label="Ticket promedio"
-                value={loading ? "…" : reporte?.cantVentas ? fmt(reporte.ticketPromedio) : "—"}
+                value={loading ? "…" : isEmpty ? "—" : reporte?.cantVentas ? fmt(reporte.ticketPromedio) : "—"}
                 delta={reporte ? fmtDelta(reporte.deltas.ticketPromedio) : null}
                 delay={120}
               />
               <KPICard
                 label="Productos vendidos"
-                value={loading ? "…" : String(reporte?.productosVendidos ?? 0)}
+                value={loading ? "…" : isEmpty ? "—" : String(reporte?.productosVendidos ?? 0)}
                 delta={null}
-                sub="unidades hoy"
+                sub={isEmpty ? "sin datos hoy" : "unidades hoy"}
                 delay={180}
               />
             </div>

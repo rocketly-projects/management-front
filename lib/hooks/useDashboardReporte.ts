@@ -65,5 +65,6 @@ export function useDashboardReporte(fecha?: string) {
 
   useEffect(() => { fetch(); }, [fetch]);
 
-  return { data, loading, error, refetch: fetch };
+  const isEmpty = !loading && !error && data === null;
+  return { data, loading, error, isEmpty, refetch: fetch };
 }
