@@ -153,7 +153,7 @@ export default function CierreCajaPage() {
               <div className="border-b border-card-border px-5 py-4">
                 <p className="text-[13px] font-extrabold text-foreground">Desglose por método de pago</p>
                 <p className="text-xs text-muted">
-                  {loading ? "Cargando…" : `Total: ${fmt(stats.totalFact)}`}
+                  {loading ? "Cargando…" : `Total: ${fmt(totales?.totalFact ?? 0)}`}
                 </p>
               </div>
               <div>
