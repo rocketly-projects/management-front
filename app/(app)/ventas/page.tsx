@@ -83,13 +83,20 @@ export default function VentasPage() {
 
   const { desde, hasta } = useMemo(() => getDateRange(dateRange), [dateRange]);
 
-  const { data: ventas, loading, error, refetch } = useVentas({ desde, hasta, limit: 100 });
+  const { data: ventas, total, loading, error, refetch } = useVentas({
+    desde,
+    hasta,
+    page:   currentPage,
+    limit:  PAGE_SIZE,
+    estado: stFilter !== "all" ? stFilter : undefined,
+  });
 
   const { data: metodosData, loading: metodosLoading } = useVentasAgregadas({ desde, hasta, agrupar: "metodo" });
   const { data: horasData,   loading: horasLoading   } = useVentasAgregadas({ desde, hasta, agrupar: "hora"   });
 
   // Reset to page 1 when filters change
   useEffect(() => { setCurrentPage(1); }, [search, payFilter, stFilter, dateRange]);
+
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -144,18 +151,17 @@ export default function VentasPage() {
 
   /* ── Derived ─────────────────────────────────────────────── */
 
+  // estado is now a server-side filter; only search and metodoPago remain client-side
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return ventas.filter((v) => {
       if (q && !fmtNum(v.numero).toLowerCase().includes(q)) return false;
-      if (payFilter !== "all" && v.metodoPago !== payFilter)  return false;
-      if (stFilter  !== "all" && v.estado     !== stFilter)   return false;
+      if (payFilter !== "all" && v.metodoPago !== payFilter) return false;
       return true;
     });
-  }, [ventas, search, payFilter, stFilter]);
+  }, [ventas, search, payFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const kpis = useMemo(() => {
     const completed  = ventas.filter((v) => v.estado === "COMPLETADA");
@@ -206,10 +212,9 @@ export default function VentasPage() {
               warn={kpis.anuladasCount > 0}
             />
             <KPICard
-              label="Total cargadas"
-              value={loading ? "…" : String(ventas.length)}
-              sub={ventas.length >= 100 ? "Límite alcanzado — acotá el período" : `del ${dateRange === "hoy" ? "día" : dateRange === "ayer" ? "día de ayer" : dateRange === "semana" ? "últimos 7 días" : "último mes"}`}
-              warn={ventas.length >= 100}
+              label="Total del período"
+              value={loading ? "…" : String(total)}
+              sub={`del ${dateRange === "hoy" ? "día" : dateRange === "ayer" ? "día de ayer" : dateRange === "semana" ? "últimos 7 días" : "último mes"}`}
             />
           </div>
 
@@ -266,7 +271,7 @@ export default function VentasPage() {
             </select>
 
             <span className="ml-auto text-xs text-muted">
-              <span className="font-bold text-foreground">{filtered.length}</span> resultados
+              <span className="font-bold text-foreground">{total}</span> resultados
             </span>
           </div>
 
@@ -299,10 +304,10 @@ export default function VentasPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-card-border">
-                  {paginated.length === 0 ? (
+                  {filtered.length === 0 ? (
                     <div className="py-12 text-center text-sm text-muted">Sin resultados</div>
                   ) : (
-                    paginated.map((v) => (
+                    filtered.map((v) => (
                       <SaleRow key={v.id} venta={v} onClick={() => setDrawerVentaId(v.id)} />
                     ))
                   )}
@@ -312,16 +317,27 @@ export default function VentasPage() {
               {/* Pagination */}
               <div className="flex items-center gap-2 border-t border-card-border px-5 py-3 text-[12.5px] text-muted">
                 <span>
-                  Mostrando{" "}
-                  <b className="text-foreground">{Math.min(currentPage * PAGE_SIZE, filtered.length)}</b>{" "}
+                  Página{" "}
+                  <b className="text-foreground">{currentPage}</b>{" "}
                   de{" "}
-                  <b className="text-foreground">{filtered.length}</b>
+                  <b className="text-foreground">{totalPages}</b>
+                  {" · "}
+                  <b className="text-foreground">{total}</b> en total
                 </span>
                 <div className="ml-auto flex items-center gap-1.5">
-                  {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((p) => (
+                  <button type="button" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1 || loading}
+                          className="flex h-7 items-center justify-center rounded-md border border-card-border bg-white px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-gray-50 disabled:opacity-40">
+                    ← Ant.
+                  </button>
+                  {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                    const start = Math.max(1, Math.min(currentPage - 3, totalPages - 6));
+                    return start + i;
+                  }).map((p) => (
                     <button key={p} type="button" onClick={() => setCurrentPage(p)}
+                            disabled={loading}
                             className={[
-                              "flex h-7 w-7 items-center justify-center rounded-md border text-xs font-semibold transition-colors",
+                              "flex h-7 w-7 items-center justify-center rounded-md border text-xs font-semibold transition-colors disabled:opacity-40",
                               p === currentPage
                                 ? "border-accent bg-accent text-white"
                                 : "border-card-border bg-white text-foreground hover:bg-gray-50",
@@ -329,6 +345,11 @@ export default function VentasPage() {
                       {p}
                     </button>
                   ))}
+                  <button type="button" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages || loading}
+                          className="flex h-7 items-center justify-center rounded-md border border-card-border bg-white px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-gray-50 disabled:opacity-40">
+                    Sig. →
+                  </button>
                 </div>
               </div>
             </div>
