@@ -451,7 +451,7 @@ function SaleRow({ venta, onClick }: { venta: Venta; onClick: () => void }) {
       {/* # + fecha */}
       <div>
         <p className="font-mono text-[13px] font-semibold text-foreground">{fmtNum(venta.numero)}</p>
-        <p className="text-[11.5px] text-muted">{fmtDate(venta.createdAt)}</p>
+        <p className="text-[11.5px] text-muted">{fmtDate(venta.creadoEn)}</p>
       </div>
 
       {/* Descuento */}
@@ -545,7 +545,7 @@ function SaleDrawer({
         <h2 className="mt-2.5 font-mono text-[22px] font-bold text-foreground">
           {data ? fmtNum(data.numero) : "…"}
         </h2>
-        {data && <p className="mt-0.5 text-[13px] text-muted">{fmtDate(data.createdAt)}</p>}
+        {data && <p className="mt-0.5 text-[13px] text-muted">{fmtDate(data.creadoEn)}</p>}
       </div>
 
       {/* Body */}
@@ -617,7 +617,7 @@ function SaleDrawer({
                   { label: "Estado",  value: st?.label  ?? "—" },
                   { label: "Método",  value: pay?.label ?? "—" },
                   { label: "Total",   value: fmt(data.total) },
-                  { label: "Fecha",   value: fmtDate(data.createdAt) },
+                  { label: "Fecha",   value: fmtDate(data.creadoEn) },
                 ].map((d) => (
                   <div key={d.label} className="rounded-xl border border-card-border p-3.5">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{d.label}</p>

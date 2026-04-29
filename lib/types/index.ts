@@ -45,8 +45,8 @@ export interface Producto {
   categoria: string | null;
   imagen: string | null;
   activo: boolean;
-  createdAt: string;
-  updatedAt: string;
+  creadoEn: string;
+  actualizadoEn: string;
 }
 
 export interface ItemVenta {
@@ -68,7 +68,7 @@ export interface Venta {
   metodoPago: MetodoPago;
   estado: EstadoVenta;
   cajaId: string;
-  createdAt: string;
+  creadoEn: string;
   items?: ItemVenta[];
 }
 
@@ -88,7 +88,7 @@ export interface Gasto {
   cajaId: string;
   descripcion: string;
   monto: number;
-  createdAt: string;
+  creadoEn: string;
 }
 
 // ── Reporte types ───────────────────────────────────────────────

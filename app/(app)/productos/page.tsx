@@ -149,7 +149,7 @@ export default function ProductosPage() {
 
   async function handleDuplicate(p: Producto) {
     try {
-      const { id: _id, tenantId: _tid, createdAt: _ca, updatedAt: _ua, ...rest } = p;
+      const { id: _id, tenantId: _tid, creadoEn: _ca, actualizadoEn: _ua, ...rest } = p;
       await store.create({ ...rest, nombre: `${p.nombre} (copia)` });
     } catch (e) {
       setActionError(e instanceof ApiError ? e.message : "Error al duplicar el producto");
