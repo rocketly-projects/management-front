@@ -6,7 +6,7 @@ import { useCajaStore }       from "@/lib/store/cajaStore";
 import { useAuthStore }       from "@/lib/store/authStore";
 import { useProductosStore }  from "@/lib/store/productosStore";
 import { useDashboardReporte } from "@/lib/hooks/useDashboardReporte";
-import type { DashboardReporte } from "@/lib/types";
+import type { DashboardData } from "@/lib/hooks/useDashboardReporte";
 
 /* ── Config ────────────────────────────────────────────────────── */
 
@@ -36,16 +36,10 @@ function formatDate() {
   return d.charAt(0).toUpperCase() + d.slice(1);
 }
 
-function calcDeltaPct(hoy: number, ayer: number): { label: string; up: boolean } | null {
-  if (ayer === 0) return null;
-  const pct = Math.round(((hoy - ayer) / ayer) * 100);
-  return { label: `${pct >= 0 ? "+" : ""}${pct}% vs. ayer`, up: pct >= 0 };
-}
-
-function calcDeltaCount(hoy: number, ayer: number): { label: string; up: boolean } | null {
-  if (ayer === 0) return null;
-  const diff = hoy - ayer;
-  return { label: `${diff >= 0 ? "+" : ""}${diff} vs. ayer`, up: diff >= 0 };
+function fmtDelta(delta: number): { label: string; up: boolean } | null {
+  if (delta === 0) return null;
+  const rounded = Math.round(delta);
+  return { label: `${rounded >= 0 ? "+" : ""}${rounded}% vs. ayer`, up: rounded >= 0 };
 }
 
 /* ── Page ─────────────────────────────────────────────────────── */
@@ -147,28 +141,27 @@ export default function DashboardPage() {
             <div className="grid grid-cols-4 gap-4">
               <KPICard
                 label="Ventas de hoy"
-                value={loading ? "…" : fmt(reporte?.hoy.totalFact ?? 0)}
-                delta={reporte ? calcDeltaPct(reporte.hoy.totalFact, reporte.ayer.totalFact) : null}
+                value={loading ? "…" : fmt(reporte?.totalFacturado ?? 0)}
+                delta={reporte ? fmtDelta(reporte.deltas.totalFacturado) : null}
                 delay={0}
               />
               <KPICard
                 label="Cantidad de ventas"
-                value={loading ? "…" : String(reporte?.hoy.cantVentas ?? 0)}
-                delta={reporte ? calcDeltaCount(reporte.hoy.cantVentas, reporte.ayer.cantVentas) : null}
+                value={loading ? "…" : String(reporte?.cantVentas ?? 0)}
+                delta={reporte ? fmtDelta(reporte.deltas.cantVentas) : null}
                 delay={60}
               />
               <KPICard
                 label="Ticket promedio"
-                value={loading ? "…" : reporte?.hoy.cantVentas ? fmt(reporte.hoy.ticketPromedio) : "—"}
-                delta={reporte ? calcDeltaPct(reporte.hoy.ticketPromedio, reporte.ayer.ticketPromedio) : null}
+                value={loading ? "…" : reporte?.cantVentas ? fmt(reporte.ticketPromedio) : "—"}
+                delta={reporte ? fmtDelta(reporte.deltas.ticketPromedio) : null}
                 delay={120}
               />
               <KPICard
-                label="Anulaciones"
-                value={loading ? "…" : String(reporte?.hoy.anuladasCount ?? 0)}
+                label="Productos vendidos"
+                value={loading ? "…" : String(reporte?.productosVendidos ?? 0)}
                 delta={null}
-                sub={(reporte?.hoy.anuladasCount ?? 0) > 0 ? "ventas revertidas" : "sin anulaciones"}
-                warn={(reporte?.hoy.anuladasCount ?? 0) > 0}
+                sub="unidades hoy"
                 delay={180}
               />
             </div>
@@ -360,7 +353,7 @@ function SalesChart({
 function TopProductos({
   items, loading,
 }: {
-  items: DashboardReporte["topProductos"];
+  items: DashboardData["topProductos"];
   loading: boolean;
 }) {
   if (loading) return <div className="mt-3 text-sm text-muted">Cargando…</div>;

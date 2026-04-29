@@ -94,21 +94,15 @@ export interface Gasto {
 // ── Reporte types ───────────────────────────────────────────────
 
 export interface DashboardReporte {
-  hoy: {
-    totalFact: number;
-    cantVentas: number;
-    ticketPromedio: number;
-    anuladasCount: number;
-    totalAnulado: number;
-  };
-  ayer: {
-    totalFact: number;
-    cantVentas: number;
-    ticketPromedio: number;
-    anuladasCount: number;
+  fecha: string;
+  kpis: {
+    totalFacturado: { valor: number; deltaVsAyer: number };
+    cantidadVentas: { valor: number; deltaVsAyer: number };
+    ticketPromedio: { valor: number; deltaVsAyer: number };
+    productosVendidos: { valor: number; deltaVsAyer: number };
   };
   ventasPorHora: Array<{ hora: number; total: number; cantidad: number }>;
-  topProductos: Array<{ productoId: string; nombre: string; unidades: number; total: number }>;
+  topProductos: Array<{ productoId: string; nombre: string; cantidad: number; total: number }>;
 }
 
 export interface CierreCajaReporte {
