@@ -1,7 +1,7 @@
 // Mirrors the Prisma schema from management-back
 
 export type EstadoCaja = "ABIERTA" | "CERRADA";
-export type MetodoPago = "EFECTIVO" | "TARJETA_DEBITO" | "TARJETA_CREDITO" | "TRANSFERENCIA" | "OTRO";
+export type MetodoPago = "EFECTIVO" | "DEBITO" | "CREDITO" | "TRANSFERENCIA" | "MERCADO_PAGO";
 export type EstadoVenta = "COMPLETADA" | "ANULADA";
 
 export interface Tenant {

@@ -40,10 +40,10 @@ const METHOD_DISPLAY: Record<PayMethod, { label: string; kbd: string; color: str
 
 const METHOD_MAP: Record<PayMethod, MetodoPago> = {
   efectivo: "EFECTIVO",
-  debito:   "TARJETA_DEBITO",
-  credito:  "TARJETA_CREDITO",
+  debito:   "DEBITO",
+  credito:  "CREDITO",
   transf:   "TRANSFERENCIA",
-  mp:       "OTRO",
+  mp:       "MERCADO_PAGO",
 };
 
 const CAT_COLORS: Record<string, { bg: string; color: string }> = {

@@ -14,11 +14,11 @@ type DateRange = "hoy" | "ayer" | "semana" | "mes";
 /* ── Config ────────────────────────────────────────────────────── */
 
 const PAYMENTS: Record<MetodoPago, { label: string; color: string; bg: string; border: string }> = {
-  EFECTIVO:        { label: "Efectivo",      color: "#047857", bg: "rgba(16,185,129,.12)", border: "rgba(16,185,129,.25)" },
-  TARJETA_DEBITO:  { label: "Débito",        color: "#1e40af", bg: "rgba(59,130,246,.12)", border: "rgba(59,130,246,.25)" },
-  TARJETA_CREDITO: { label: "Crédito",       color: "#6d28d9", bg: "rgba(139,92,246,.12)", border: "rgba(139,92,246,.25)" },
-  TRANSFERENCIA:   { label: "Transferencia", color: "#0e7490", bg: "rgba(6,182,212,.12)",  border: "rgba(6,182,212,.25)"  },
-  OTRO:            { label: "Mercado Pago",  color: "#075985", bg: "rgba(14,165,233,.14)", border: "rgba(14,165,233,.30)" },
+  EFECTIVO:      { label: "Efectivo",      color: "#047857", bg: "rgba(16,185,129,.12)", border: "rgba(16,185,129,.25)" },
+  DEBITO:        { label: "Débito",        color: "#1e40af", bg: "rgba(59,130,246,.12)", border: "rgba(59,130,246,.25)" },
+  CREDITO:       { label: "Crédito",       color: "#6d28d9", bg: "rgba(139,92,246,.12)", border: "rgba(139,92,246,.25)" },
+  TRANSFERENCIA: { label: "Transferencia", color: "#0e7490", bg: "rgba(6,182,212,.12)",  border: "rgba(6,182,212,.25)"  },
+  MERCADO_PAGO:  { label: "Mercado Pago",  color: "#075985", bg: "rgba(14,165,233,.14)", border: "rgba(14,165,233,.30)" },
 };
 
 const STATUS: Record<EstadoVenta, { label: string; color: string; dot: string }> = {

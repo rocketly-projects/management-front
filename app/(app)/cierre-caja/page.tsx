@@ -11,11 +11,11 @@ import type { MetodoPago } from "@/lib/types";
 /* ── Config ────────────────────────────────────────────────────── */
 
 const PAYMENTS: Record<MetodoPago, { label: string; color: string; bg: string; abbr: string }> = {
-  EFECTIVO:        { label: "Efectivo",      color: "#1a6b3a", bg: "#e6f7ee", abbr: "EF" },
-  TARJETA_DEBITO:  { label: "Débito",        color: "#1a4a7a", bg: "#e6eef7", abbr: "DB" },
-  TARJETA_CREDITO: { label: "Crédito",       color: "#5a3a8a", bg: "#f0eafa", abbr: "CR" },
-  TRANSFERENCIA:   { label: "Transferencia", color: "#6a4a1a", bg: "#faf0e0", abbr: "TR" },
-  OTRO:            { label: "Mercado Pago",  color: "#0055ff", bg: "#e6ecff", abbr: "MP" },
+  EFECTIVO:      { label: "Efectivo",      color: "#1a6b3a", bg: "#e6f7ee", abbr: "EF" },
+  DEBITO:        { label: "Débito",        color: "#1a4a7a", bg: "#e6eef7", abbr: "DB" },
+  CREDITO:       { label: "Crédito",       color: "#5a3a8a", bg: "#f0eafa", abbr: "CR" },
+  TRANSFERENCIA: { label: "Transferencia", color: "#6a4a1a", bg: "#faf0e0", abbr: "TR" },
+  MERCADO_PAGO:  { label: "Mercado Pago",  color: "#0055ff", bg: "#e6ecff", abbr: "MP" },
 };
 
 /* ── Helpers ───────────────────────────────────────────────────── */
