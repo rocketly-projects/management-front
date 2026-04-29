@@ -26,7 +26,6 @@ const nav = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { perfil, logout } = useAuthStore();
-  console.log('perfil', perfil)
   const router = useRouter();
 
   function handleLogout() {
