@@ -106,20 +106,17 @@ export interface DashboardReporte {
 }
 
 export interface CierreCajaReporte {
+  caja: { id: string; apertura: string; cierre?: string };
   totales: {
-    totalFact: number;
-    cantVentas: number;
+    totalFacturado: number;
+    cantidadVentas: number;
     ticketPromedio: number;
-    anuladasCount: number;
-    totalAnulado: number;
+    productosVendidos: number;
   };
-  porMetodo: Array<{ metodoPago: MetodoPago; total: number; cantidad: number }>;
-  topProductos: Array<{ productoId: string; nombre: string; unidades: number; total: number }>;
-  comparativoSemanal: {
-    dias: Array<{ fecha: string; total: number }>;
-    totalSemana: number;
-    promedio: number;
-  };
+  desglosePagos: Array<{ metodo: MetodoPago; monto: number; cantidad: number; porcentaje: number }>;
+  topProductos: Array<{ productoId: string; nombre: string; cantidad: number; total: number }>;
+  comparativoSemanal: Array<{ fecha: string; diaSemana: string; total: number; cantidadVentas: number }>;
+  gastos: { total: number; cantidad: number };
 }
 
 export interface ComparativoSemanal {
