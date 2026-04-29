@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useProductosStore } from "@/lib/store/productosStore";
 import { useCajaStore } from "@/lib/store/cajaStore";
 import { useAuthStore } from "@/lib/store/authStore";
 import { createVenta } from "@/lib/api/ventas";
+import { getGastos, createGasto } from "@/lib/api/caja";
 import { ApiError } from "@/lib/api/client";
-import type { MetodoPago } from "@/lib/types";
+import type { MetodoPago, Gasto } from "@/lib/types";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -90,6 +91,14 @@ export default function CajaPage() {
   // Caja open modal state
   const [abrirLoading, setAbrirLoading] = useState(false);
   const [abrirError,   setAbrirError]   = useState<string | null>(null);
+
+  // Gastos state
+  const [gastosOpen,   setGastosOpen]   = useState(false);
+  const [gastos,       setGastos]       = useState<Gasto[]>([]);
+  const [gastoDesc,    setGastoDesc]    = useState("");
+  const [gastoMonto,   setGastoMonto]   = useState("");
+  const [gastoLoading, setGastoLoading] = useState(false);
+  const [gastoError,   setGastoError]   = useState<string | null>(null);
 
   // Search state
   const [query,      setQuery]      = useState("");
@@ -180,6 +189,38 @@ export default function CajaPage() {
     setCash("");
     setSubmitError(null);
   }
+
+  /* ── Gastos ─────────────────────────────────────────────── */
+
+  const fetchGastos = useCallback(async () => {
+    if (!cajaActiva) return;
+    try {
+      const res = await getGastos(cajaActiva.id);
+      setGastos(res ?? []);
+    } catch {}
+  }, [cajaActiva]);
+
+  useEffect(() => { if (gastosOpen) fetchGastos(); }, [gastosOpen, fetchGastos]);
+
+  async function handleAddGasto() {
+    if (!cajaActiva || !gastoDesc.trim() || !gastoMonto) return;
+    const monto = parseFloat(gastoMonto);
+    if (isNaN(monto) || monto <= 0) return;
+    setGastoLoading(true);
+    setGastoError(null);
+    try {
+      await createGasto(cajaActiva.id, gastoDesc.trim(), monto);
+      setGastoDesc("");
+      setGastoMonto("");
+      await fetchGastos();
+    } catch (e) {
+      setGastoError(e instanceof ApiError ? e.message : "Error al registrar gasto");
+    } finally {
+      setGastoLoading(false);
+    }
+  }
+
+  const gastoTotal = gastos.reduce((s, g) => s + g.monto, 0);
 
   /* ── Caja guard ──────────────────────────────────────────── */
 
@@ -524,6 +565,81 @@ export default function CajaPage() {
             )}
           </div>
 
+          {/* Gastos del turno */}
+          {cajaActiva && (
+            <div className="flex-shrink-0 border-t border-card-border">
+              <button type="button"
+                      onClick={() => setGastosOpen((v) => !v)}
+                      className="flex w-full items-center justify-between px-5 py-3 text-[12.5px] font-semibold text-foreground hover:bg-gray-50 transition-colors">
+                <span className="flex items-center gap-2">
+                  <IconExpense className="h-3.5 w-3.5 text-muted" />
+                  Gastos del turno
+                  {gastos.length > 0 && (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                      {gastos.length}
+                    </span>
+                  )}
+                </span>
+                <span className="flex items-center gap-2 text-muted">
+                  {gastoTotal > 0 && <span className="font-mono text-amber-600">−{fmtARS(gastoTotal)}</span>}
+                  <span className={`transition-transform ${gastosOpen ? "rotate-180" : ""}`}>▾</span>
+                </span>
+              </button>
+
+              {gastosOpen && (
+                <div className="border-t border-card-border bg-gray-50/60 px-5 py-4 space-y-3">
+                  {/* Form */}
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={gastoDesc}
+                      onChange={(e) => setGastoDesc(e.target.value)}
+                      placeholder="Descripción (ej: pago de servicio)"
+                      className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground placeholder:text-muted outline-none focus:border-accent"
+                    />
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-sm font-semibold text-muted">$</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={gastoMonto}
+                          onChange={(e) => setGastoMonto(e.target.value)}
+                          placeholder="0"
+                          className="h-9 w-full rounded-lg border border-card-border bg-white pl-7 font-mono text-[13px] font-semibold text-foreground outline-none focus:border-accent"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddGasto}
+                        disabled={gastoLoading || !gastoDesc.trim() || !gastoMonto}
+                        className="rounded-lg bg-accent px-4 text-[13px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                      >
+                        {gastoLoading ? "…" : "Agregar"}
+                      </button>
+                    </div>
+                    {gastoError && <p className="text-[12px] font-semibold text-red-600">{gastoError}</p>}
+                  </div>
+
+                  {/* List */}
+                  {gastos.length > 0 && (
+                    <div className="space-y-1.5">
+                      {gastos.map((g) => (
+                        <div key={g.id} className="flex items-center justify-between rounded-lg border border-card-border bg-white px-3 py-2 text-[12.5px]">
+                          <span className="truncate text-foreground">{g.descripcion}</span>
+                          <span className="ml-3 flex-shrink-0 font-mono font-semibold text-amber-600">−{fmtARS(g.monto)}</span>
+                        </div>
+                      ))}
+                      <p className="text-right text-[11.5px] font-bold text-amber-700">
+                        Total gastos: {fmtARS(gastoTotal)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex-shrink-0 border-t border-card-border p-4">
             <button type="button" onClick={handleCobrar}
                     disabled={cart.length === 0 || submitting || !cajaActiva}
@@ -787,6 +903,13 @@ function IconCash({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <rect x="2" y="6" width="20" height="13" rx="2" /><circle cx="12" cy="12" r="3" /><path d="M6 6V4M18 6V4" />
+    </svg>
+  );
+}
+function IconExpense({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2v12M4 6l4-4 4 4M4 13h8" />
     </svg>
   );
 }
