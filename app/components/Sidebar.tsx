@@ -19,6 +19,7 @@ const nav = [
     section: "CONFIGURACIÓN",
     items: [
       { label: "Cierre de Caja", href: "/cierre-caja", icon: IconLock },
+      { label: "Configuración", href: "/configuracion", icon: IconCog },
     ],
   },
 ];
@@ -148,6 +149,15 @@ function IconLock({ className }: { className?: string }) {
       <rect x="3" y="7.5" width="10" height="7" rx="1.5" />
       <path d="M5 7.5V5a3 3 0 016 0v2.5" />
       <circle cx="8" cy="11" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function IconCog({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1v2M8 13v2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M1 8h2M13 8h2M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" />
     </svg>
   );
 }
