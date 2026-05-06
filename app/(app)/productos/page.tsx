@@ -710,10 +710,19 @@ function ProductPanel({
   }
 
   async function handleSave() {
-    if (!form.nombre?.trim()) return;
+    if (!form.nombre?.trim() || !form.precio) return;
     setSaving(true);
     try {
-      await onSave({ ...form, id: product?.id });
+      const sanitized: Partial<Producto> = {
+        ...form,
+        imagen:     form.imagen?.trim()    || undefined,
+        marca:      form.marca?.trim()     || undefined,
+        sku:        form.sku?.trim()       || undefined,
+        categoria:  form.categoria?.trim() || undefined,
+        costo:      form.costo             || undefined,
+        stockAlert: form.stockAlert        || undefined,
+      };
+      await onSave({ ...sanitized, id: product?.id });
     } finally {
       setSaving(false);
     }
@@ -947,7 +956,7 @@ function ProductPanel({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || !form.nombre?.trim()}
+              disabled={saving || !form.nombre?.trim() || !form.precio}
               className="rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               {saving ? "Guardando..." : isNew ? "Agregar producto" : "Guardar cambios"}

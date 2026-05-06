@@ -84,9 +84,9 @@ export default function ConfiguracionPage() {
       const updated = await updatePerfil({
         nombreNegocio: perfilForm.nombreNegocio,
         nombreDueno: perfilForm.nombreDueno,
-        telefono: perfilForm.telefono || null,
-        direccion: perfilForm.direccion || null,
-        taxId: perfilForm.taxId || null,
+        telefono: perfilForm.telefono || undefined,
+        direccion: perfilForm.direccion || undefined,
+        taxId: perfilForm.taxId || undefined,
       });
       if (token) setAuth(token, updated);
       showToast("success", "Datos del negocio actualizados");
