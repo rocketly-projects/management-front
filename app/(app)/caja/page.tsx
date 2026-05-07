@@ -6,8 +6,11 @@ import { useCajaStore } from "@/lib/store/cajaStore";
 import { useAuthStore } from "@/lib/store/authStore";
 import { createVenta } from "@/lib/api/ventas";
 import { getGastos, createGasto } from "@/lib/api/caja";
+import { getClientes, createCliente } from "@/lib/api/clientes";
 import { ApiError } from "@/lib/api/client";
-import type { MetodoPago, Gasto } from "@/lib/types";
+import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
+import { useCierreCajaReporte } from "@/lib/hooks/useCierreCajaReporte";
+import type { MetodoPago, Gasto, Cliente, ClienteConDeuda } from "@/lib/types";
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -20,7 +23,7 @@ interface CartItem extends CatalogItem {
   qty: number; cartId: number;
 }
 
-type PayMethod = "efectivo" | "debito" | "credito" | "transf" | "mp";
+type PayMethod = "efectivo" | "debito" | "credito" | "transf" | "mp" | "fiado";
 type DiscType  = "pct" | "amt";
 
 interface SaleModal {
@@ -37,6 +40,7 @@ const METHOD_DISPLAY: Record<PayMethod, { label: string; kbd: string; color: str
   credito:  { label:"Crédito",       kbd:"F3", color:"#6d28d9", bg:"rgba(139,92,246,.1)", border:"rgba(139,92,246,.4)" },
   transf:   { label:"Transferencia", kbd:"F4", color:"#0e7490", bg:"rgba(6,182,212,.1)",  border:"rgba(6,182,212,.4)"  },
   mp:       { label:"Mercado Pago",  kbd:"F5", color:"#075985", bg:"rgba(14,165,233,.12)", border:"rgba(14,165,233,.4)" },
+  fiado:    { label:"Fiado",         kbd:"F6", color:"#b45309", bg:"rgba(245,158,11,.12)", border:"rgba(245,158,11,.4)" },
 };
 
 const METHOD_MAP: Record<PayMethod, MetodoPago> = {
@@ -45,6 +49,16 @@ const METHOD_MAP: Record<PayMethod, MetodoPago> = {
   credito:  "CREDITO",
   transf:   "TRANSFERENCIA",
   mp:       "MERCADO_PAGO",
+  fiado:    "FIADO",
+};
+
+const METHOD_FROM_API: Record<MetodoPago, PayMethod> = {
+  EFECTIVO:      "efectivo",
+  DEBITO:        "debito",
+  CREDITO:       "credito",
+  TRANSFERENCIA: "transf",
+  MERCADO_PAGO:  "mp",
+  FIADO:         "fiado",
 };
 
 const CAT_COLORS: Record<string, { bg: string; color: string }> = {
@@ -89,8 +103,12 @@ export default function CajaPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Caja open modal state
+  const [abrirOpen,    setAbrirOpen]    = useState(false);
   const [abrirLoading, setAbrirLoading] = useState(false);
   const [abrirError,   setAbrirError]   = useState<string | null>(null);
+
+  // Caja close modal state
+  const [cerrarOpen, setCerrarOpen] = useState(false);
 
   // Gastos state
   const [gastosOpen,   setGastosOpen]   = useState(false);
@@ -106,12 +124,40 @@ export default function CajaPage() {
   const [focusedIdx, setFocusedIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Cliente state
+  const [selectedCliente, setSelectedCliente] = useState<ClienteConDeuda | null>(null);
+  const [clienteQuery, setClienteQuery] = useState("");
+  const [clienteDropOpen, setClienteDropOpen] = useState(false);
+  const [clienteResults, setClienteResults] = useState<ClienteConDeuda[]>([]);
+  const [clienteSearching, setClienteSearching] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const clienteSearchRef = useRef<HTMLInputElement>(null);
+  const debouncedClienteQuery = useDebouncedValue(clienteQuery, 250);
+
+  // Fetch matching clientes (with deuda) when the debounced query changes
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      const q = debouncedClienteQuery.trim();
+      if (!q) { setClienteResults([]); setClienteSearching(false); return; }
+      setClienteSearching(true);
+      getClientes({ search: q, conDeuda: true })
+        .then((res) => { if (!cancelled) setClienteResults(res as ClienteConDeuda[]); })
+        .catch(() => { if (!cancelled) setClienteResults([]); })
+        .finally(() => { if (!cancelled) setClienteSearching(false); });
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [debouncedClienteQuery]);
+
   // Ensure products are loaded when entering the POS (refreshes stock levels)
   useEffect(() => {
     fetchProductos();
   }, [fetchProductos]);
 
   /* ── Derived ─────────────────────────────────────────────── */
+
+  const effectiveMethod: PayMethod = !selectedCliente && method === "fiado" ? "efectivo" : method;
 
   const results = useMemo(() => {
     const q = query.toLowerCase();
@@ -188,6 +234,9 @@ export default function CajaPage() {
     setDiscount("");
     setCash("");
     setSubmitError(null);
+    setSelectedCliente(null);
+    setClienteQuery("");
+    setClienteDropOpen(false);
   }
 
   /* ── Gastos ─────────────────────────────────────────────── */
@@ -200,7 +249,16 @@ export default function CajaPage() {
     } catch {}
   }, [cajaActiva]);
 
-  useEffect(() => { if (gastosOpen) fetchGastos(); }, [gastosOpen, fetchGastos]);
+  useEffect(() => {
+    if (!gastosOpen || !cajaActiva) return;
+    const id = cajaActiva.id;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      if (cancelled) return;
+      try { const res = await getGastos(id); if (!cancelled) setGastos(res ?? []); } catch {}
+    }, 0);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [gastosOpen, cajaActiva]);
 
   async function handleAddGasto() {
     if (!cajaActiva || !gastoDesc.trim() || !gastoMonto) return;
@@ -229,6 +287,7 @@ export default function CajaPage() {
     setAbrirError(null);
     try {
       await abrir(montoInicial);
+      setAbrirOpen(false);
     } catch (e) {
       setAbrirError(e instanceof ApiError ? e.message : "Error al abrir la caja");
     } finally {
@@ -246,15 +305,16 @@ export default function CajaPage() {
       const venta = await createVenta({
         items: cart.map((item) => ({ productoId: item.id, cantidad: item.qty })),
         descuento: discAmt,
-        metodoPago: METHOD_MAP[method],
+        metodoPago: METHOD_MAP[effectiveMethod],
         cajaId: cajaActiva.id,
+        ...(selectedCliente ? { clienteId: selectedCliente.id } : {}),
       });
       setModal({
         num: venta.numero,
-        method,
+        method: effectiveMethod,
         total: venta.total,
         discAmt: venta.descuento,
-        change: method === "efectivo" ? cashAmt - venta.total : null,
+        change: effectiveMethod === "efectivo" ? cashAmt - venta.total : null,
         items: cart,
       });
       // Refresh stocks after sale
@@ -281,8 +341,13 @@ export default function CajaPage() {
         if (e.key === "Escape") { handleNuevaVenta(); }
         return;
       }
+      if (quickCreateOpen) {
+        if (e.key === "Escape") { setQuickCreateOpen(false); }
+        return;
+      }
       const fMap: Record<string, PayMethod> = { F1:"efectivo", F2:"debito", F3:"credito", F4:"transf", F5:"mp" };
       if (fMap[e.key]) { e.preventDefault(); setMethod(fMap[e.key]); return; }
+      if (e.key === "F6") { e.preventDefault(); if (selectedCliente) setMethod("fiado"); return; }
       if (e.key === "F12" || (e.ctrlKey && e.key === "Enter")) { e.preventDefault(); handleCobrar(); return; }
       if (tag === "INPUT") return;
       if (cart.length === 0) return;
@@ -298,7 +363,7 @@ export default function CajaPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting]);
+  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting, selectedCliente, quickCreateOpen]);
 
   /* ── Search handlers ─────────────────────────────────────── */
 
@@ -326,7 +391,7 @@ export default function CajaPage() {
         </div>
         <div className="font-mono text-[12px] font-semibold text-white/50">{clock}</div>
         <div className="ml-auto flex items-center gap-2">
-          {(["F1","F2","F3","F4","F5","F12"] as const).map((k) => (
+          {(["F1","F2","F3","F4","F5","F6","F12"] as const).map((k) => (
             <span key={k} className="rounded border border-white/15 bg-white/8 px-1.5 py-0.5 font-mono text-[10px] text-white/40">{k}</span>
           ))}
           <div className="ml-2 h-4 w-px bg-white/10" />
@@ -334,6 +399,19 @@ export default function CajaPage() {
                   className="rounded-md border border-white/15 bg-white/8 px-3 py-1 text-[12px] font-semibold text-white/60 hover:bg-white/15 transition-colors">
             Cancelar
           </button>
+          {cajaActiva ? (
+            <button type="button" onClick={() => setCerrarOpen(true)}
+                    className="flex items-center gap-1.5 rounded-md bg-white/10 px-3 py-1 text-[12px] font-semibold text-white hover:bg-white/20 transition-colors">
+              <IconLockSmall className="h-3 w-3" />
+              Cerrar caja
+            </button>
+          ) : !cajaLoading ? (
+            <button type="button" onClick={() => { setAbrirOpen(true); setAbrirError(null); }}
+                    className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-[12px] font-semibold text-white hover:opacity-90 transition-opacity">
+              <IconCash className="h-3 w-3" />
+              Abrir caja
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -344,6 +422,26 @@ export default function CajaPage() {
           <button type="button" onClick={() => setSubmitError(null)} className="text-white/70 hover:text-white">✕</button>
         </div>
       )}
+
+      {!cajaLoading && !cajaActiva ? (
+        /* ── Caja cerrada empty state ─────────────────────── */
+        <div className="flex flex-1 items-center justify-center bg-main-bg">
+          <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white shadow-sm">
+              <IconCash className="h-6 w-6 text-muted" />
+            </div>
+            <p className="text-[16px] font-extrabold text-foreground">La caja está cerrada</p>
+            <p className="text-[13px] text-muted">
+              Abrí una caja para empezar a registrar ventas. También podés navegar a otras secciones desde el menú.
+            </p>
+            <button type="button" onClick={() => { setAbrirOpen(true); setAbrirError(null); }}
+                    className="mt-1 flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity">
+              <IconCash className="h-4 w-4" />
+              Abrir caja
+            </button>
+          </div>
+        </div>
+      ) : <>
 
       {/* ── Search bar ──────────────────────────────────────── */}
       <div className="relative flex-shrink-0 border-b border-card-border bg-white px-4 py-2.5">
@@ -488,20 +586,117 @@ export default function CajaPage() {
         </div>
 
         {/* Payment panel */}
-        <div className="flex w-[380px] flex-shrink-0 flex-col overflow-y-auto bg-white">
-          <div className="flex flex-1 flex-col gap-0 px-5 py-5 space-y-4">
+        <div className="flex w-[380px] flex-shrink-0 flex-col overflow-hidden bg-white">
+          <div className="flex-1 overflow-y-auto">
 
-            <div className="space-y-2">
-              <div className="flex justify-between text-[13px]">
-                <span className="text-muted">Subtotal</span>
-                <span className="font-mono font-semibold text-foreground">{fmtARS(subtotal)}</span>
+            {/* Total — anchor */}
+            <div className="border-b border-card-border px-5 pt-5 pb-4">
+              <p className="text-[10.5px] font-bold uppercase tracking-[.14em] text-muted">Total a cobrar</p>
+              <p className="mt-1.5 font-mono text-[44px] font-extrabold leading-none tracking-tight text-foreground">
+                {fmtARS(total)}
+              </p>
+              <div className="mt-2.5 flex items-center justify-between text-[12px] text-muted">
+                <span>Subtotal <span className="font-mono text-foreground/70">{fmtARS(subtotal)}</span></span>
+                {discAmt > 0 && (
+                  <span className="font-semibold text-emerald-600">−{fmtARS(discAmt)}</span>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] text-muted">Descuento</span>
-                <div className="ml-auto flex items-center gap-1.5">
+            </div>
+
+            {/* Cliente */}
+            <div className="border-b border-card-border px-5 py-4">
+              <ClienteSelector
+                cliente={selectedCliente}
+                query={clienteQuery}
+                setQuery={setClienteQuery}
+                dropOpen={clienteDropOpen}
+                setDropOpen={setClienteDropOpen}
+                results={clienteResults}
+                searching={clienteSearching}
+                inputRef={clienteSearchRef}
+                onSelect={(c) => {
+                  setSelectedCliente(c);
+                  setClienteQuery("");
+                  setClienteDropOpen(false);
+                }}
+                onClear={() => {
+                  setSelectedCliente(null);
+                  setClienteQuery("");
+                }}
+                onOpenQuickCreate={() => setQuickCreateOpen(true)}
+              />
+            </div>
+
+            {/* Method */}
+            <div className="border-b border-card-border px-5 py-4">
+              <p className="mb-2.5 text-[10.5px] font-bold uppercase tracking-[.14em] text-muted">Método de pago</p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(["efectivo","debito","credito","transf","mp","fiado"] as PayMethod[]).map((m) => (
+                  <MethodBtn
+                    key={m}
+                    method={m}
+                    selected={effectiveMethod === m}
+                    onSelect={() => {
+                      if (m === "fiado" && !selectedCliente) return;
+                      setMethod(m);
+                    }}
+                    disabled={m === "fiado" && !selectedCliente}
+                  />
+                ))}
+              </div>
+              {!selectedCliente && (
+                <p className="mt-2 text-[11px] text-muted">Seleccioná un cliente para habilitar fiado.</p>
+              )}
+            </div>
+
+            {/* Per-method block */}
+            {effectiveMethod === "efectivo" && (
+              <div className="border-b border-card-border px-5 py-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-[10.5px] font-bold uppercase tracking-[.14em] text-muted">Con cuánto paga</p>
+                  {cash && (
+                    <span className={`font-mono text-[12px] font-bold ${change >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {change >= 0 ? `Vuelto ${fmtARS(change)}` : "Insuficiente"}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-semibold text-muted">$</span>
+                  <input type="text" value={cash}
+                         onChange={(e) => setCash(e.target.value)}
+                         placeholder={String(total)}
+                         className="h-[40px] w-full rounded-lg border border-card-border bg-white pl-7 font-mono text-[15px] font-semibold text-foreground outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/15" />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {CASH_PRESETS.filter((p) => p >= total * 0.5).slice(0, 4).map((p) => (
+                    <button key={p} type="button" onClick={() => setCash(String(p))}
+                            className="rounded-md border border-card-border bg-gray-50 px-2.5 py-1 font-mono text-[12px] font-semibold text-foreground/80 hover:bg-gray-100 hover:text-foreground transition-colors">
+                      {fmtARS(p)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {effectiveMethod === "fiado" && selectedCliente && (
+              <div className="border-b border-card-border bg-amber-50/50 px-5 py-3.5">
+                <p className="text-[12px] font-semibold text-amber-800">
+                  Se sumará a la deuda de {selectedCliente.nombre}.
+                </p>
+                <p className="mt-1 font-mono text-[11.5px] text-amber-700/90">
+                  {fmtARS(selectedCliente.deuda ?? 0)} → <span className="font-bold">{fmtARS((selectedCliente.deuda ?? 0) + total)}</span>
+                </p>
+              </div>
+            )}
+
+            {/* Discount — secondary */}
+            <div className="border-b border-card-border px-5 py-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10.5px] font-bold uppercase tracking-[.14em] text-muted">Descuento</p>
+                <div className="flex items-center gap-1.5">
                   {(["pct","amt"] as DiscType[]).map((t) => (
                     <button key={t} type="button" onClick={() => setDiscType(t)}
-                            className={`h-7 w-8 rounded-md border text-[12px] font-bold transition-colors ${discType === t ? "border-accent bg-accent text-white" : "border-card-border bg-white text-muted hover:border-gray-300"}`}>
+                            className={`h-7 w-7 rounded-md border text-[12px] font-bold transition-colors ${discType === t ? "border-accent bg-accent text-white" : "border-card-border bg-white text-muted hover:border-gray-300"}`}>
                       {t === "pct" ? "%" : "$"}
                     </button>
                   ))}
@@ -511,58 +706,7 @@ export default function CajaPage() {
                          className="h-7 w-16 rounded-md border border-card-border bg-white px-2 text-right font-mono text-[13px] font-semibold text-foreground outline-none focus:border-accent" />
                 </div>
               </div>
-              {discAmt > 0 && (
-                <p className="text-right text-[12px] font-semibold text-emerald-600">Ahorro: −{fmtARS(discAmt)}</p>
-              )}
             </div>
-
-            <div className="rounded-xl border-2 border-accent/20 bg-accent/5 px-4 py-3">
-              <p className="mb-0.5 text-[11px] font-bold uppercase tracking-widest text-muted">Total</p>
-              <p className="font-mono text-[38px] font-extrabold leading-none tracking-tight text-accent">{fmtARS(total)}</p>
-            </div>
-
-            <div>
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-[.08em] text-muted">Método de pago</p>
-              <div className="grid grid-cols-3 gap-2">
-                {(["efectivo","debito","credito"] as PayMethod[]).map((m) => (
-                  <MethodBtn key={m} method={m} selected={method === m} onSelect={() => setMethod(m)} />
-                ))}
-                <div className="col-span-1">
-                  <MethodBtn method="transf" selected={method === "transf"} onSelect={() => setMethod("transf")} />
-                </div>
-                <div className="col-span-2">
-                  <MethodBtn method="mp" selected={method === "mp"} onSelect={() => setMethod("mp")} fullWidth />
-                </div>
-              </div>
-            </div>
-
-            {method === "efectivo" && (
-              <div className="space-y-2">
-                <p className="text-[12px] font-semibold text-muted">Con cuánto paga</p>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm font-semibold text-muted">$</span>
-                    <input type="text" value={cash}
-                           onChange={(e) => setCash(e.target.value)}
-                           placeholder={String(total)}
-                           className="h-[38px] w-full rounded-lg border border-card-border bg-white pl-7 font-mono text-[14px] font-semibold text-foreground outline-none focus:border-accent" />
-                  </div>
-                  {cash && (
-                    <span className={`font-mono text-[13px] font-bold ${change >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                      {change >= 0 ? `Vuelto ${fmtARS(change)}` : "Insuficiente"}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {CASH_PRESETS.filter((p) => p >= total * 0.5).slice(0, 4).map((p) => (
-                    <button key={p} type="button" onClick={() => setCash(String(p))}
-                            className="rounded-md border border-card-border bg-gray-50 px-2.5 py-1 font-mono text-[12px] font-semibold text-foreground hover:bg-gray-100 transition-colors">
-                      {fmtARS(p)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Gastos del turno */}
@@ -655,6 +799,7 @@ export default function CajaPage() {
           </div>
         </div>
       </div>
+      </>}
 
       {/* ── Status bar ──────────────────────────────────────── */}
       <div className="flex h-6 flex-shrink-0 items-center gap-4 bg-sidebar px-4 text-[11px] text-white/40">
@@ -666,7 +811,7 @@ export default function CajaPage() {
         />
         <StatusItem label="Usuario" value={perfil?.nombreDueno ?? "—"} />
         <div className="ml-auto flex items-center gap-3">
-          {[["F1–F5","método pago"],["F12","cobrar"],["↑↓","navegar"],["+ −","cantidad"]].map(([k,l]) => (
+          {[["F1–F5","método pago"],["F6","fiado"],["F12","cobrar"],["↑↓","navegar"],["+ −","cantidad"]].map(([k,l]) => (
             <span key={k} className="flex items-center gap-1">
               <kbd className="rounded border border-white/15 bg-white/8 px-1 py-px font-mono text-[9.5px]">{k}</kbd>
               <span>{l}</span>
@@ -675,17 +820,464 @@ export default function CajaPage() {
         </div>
       </div>
 
-      {/* ── Caja guard modal ─────────────────────────────────── */}
-      {!cajaLoading && !cajaActiva && (
+      {/* ── Abrir caja modal ─────────────────────────────────── */}
+      {abrirOpen && (
         <AbrirCajaModal
           onAbrir={handleAbrirCaja}
+          onClose={() => { setAbrirOpen(false); setAbrirError(null); }}
           loading={abrirLoading}
           error={abrirError}
         />
       )}
 
+      {/* ── Cerrar caja modal ────────────────────────────────── */}
+      {cerrarOpen && cajaActiva && (
+        <CerrarCajaModal
+          cajaId={cajaActiva.id}
+          onClose={() => setCerrarOpen(false)}
+          onCerrada={() => setCerrarOpen(false)}
+        />
+      )}
+
       {/* ── Success modal ────────────────────────────────────── */}
       {modal && <SuccessModal sale={modal} onNuevaVenta={handleNuevaVenta} />}
+
+      {/* ── Quick-create cliente modal ───────────────────────── */}
+      {quickCreateOpen && (
+        <ClienteQuickCreateModal
+          onClose={() => setQuickCreateOpen(false)}
+          onCreated={(c) => {
+            setSelectedCliente({ ...c, deuda: 0 });
+            setQuickCreateOpen(false);
+            setClienteQuery("");
+            setClienteDropOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Cliente selector ──────────────────────────────────────────── */
+
+function ClienteSelector({
+  cliente, query, setQuery, dropOpen, setDropOpen, results, searching,
+  inputRef, onSelect, onClear, onOpenQuickCreate,
+}: {
+  cliente: ClienteConDeuda | null;
+  query: string;
+  setQuery: (v: string) => void;
+  dropOpen: boolean;
+  setDropOpen: (v: boolean) => void;
+  results: ClienteConDeuda[];
+  searching: boolean;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onSelect: (c: ClienteConDeuda) => void;
+  onClear: () => void;
+  onOpenQuickCreate: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[11px] font-bold uppercase tracking-[.08em] text-muted">Cliente</p>
+
+      {cliente ? (
+        <div className="flex items-center gap-2 rounded-lg border border-card-border bg-gray-50/60 px-3 py-2">
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
+            <IconUser className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-semibold text-foreground">{cliente.nombre}</p>
+            {(cliente.deuda ?? 0) > 0 ? (
+              <p className="text-[11px] text-amber-600">
+                Deuda: <span className="font-mono font-semibold">{fmtARS(cliente.deuda)}</span>
+              </p>
+            ) : (
+              <p className="text-[11px] text-emerald-600">Al día</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClear}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:bg-gray-100 hover:text-foreground transition-colors"
+            aria-label="Quitar cliente"
+          >
+            <IconX className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="relative">
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <IconSearch className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => { setQuery(e.target.value); setDropOpen(true); }}
+                onFocus={() => setDropOpen(true)}
+                onBlur={() => setTimeout(() => setDropOpen(false), 150)}
+                placeholder="Buscar cliente…"
+                className="h-9 w-full rounded-lg border border-card-border bg-white pl-9 pr-3 text-[13px] text-foreground placeholder:text-muted outline-none transition-shadow focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={onOpenQuickCreate}
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border border-card-border bg-white text-muted hover:bg-gray-50 hover:text-foreground transition-colors"
+              aria-label="Crear cliente"
+              title="Crear cliente"
+            >
+              <IconPlus className="h-4 w-4" />
+            </button>
+          </div>
+
+          {dropOpen && query.trim() && (
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl border border-card-border bg-white shadow-xl">
+              {searching ? (
+                <div className="px-4 py-3 text-[12px] text-muted">Buscando…</div>
+              ) : results.length === 0 ? (
+                <div className="px-4 py-3 text-[12px] text-muted">
+                  Sin resultados.
+                  <button
+                    type="button"
+                    onMouseDown={onOpenQuickCreate}
+                    className="ml-1 font-semibold text-accent hover:underline"
+                  >
+                    Crear &ldquo;{query.trim()}&rdquo;
+                  </button>
+                </div>
+              ) : (
+                results.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onMouseDown={() => onSelect(c)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-gray-50"
+                  >
+                    <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-gray-100 text-muted">
+                      <IconUser className="h-3 w-3" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12.5px] font-semibold text-foreground">{c.nombre}</p>
+                      {c.telefono && <p className="font-mono text-[10.5px] text-muted">{c.telefono}</p>}
+                    </div>
+                    {c.deuda > 0 && (
+                      <span className="font-mono text-[11px] font-semibold text-amber-600">
+                        {fmtARS(c.deuda)}
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Quick-create cliente modal ─────────────────────────────────── */
+
+function ClienteQuickCreateModal({
+  onClose, onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (c: Cliente) => void;
+}) {
+  const [nombre, setNombre]     = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!nombre.trim()) { setError("El nombre es requerido"); return; }
+    setSubmitting(true); setError(null);
+    try {
+      const c = await createCliente({
+        nombre: nombre.trim(),
+        telefono: telefono.trim() || undefined,
+      });
+      onCreated(c);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Error al crear cliente");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+      onClick={() => !submitting && onClose()}
+    >
+      <div
+        className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "fadeSlideIn .25s ease" }}
+      >
+        <div className="border-b border-card-border px-6 py-5">
+          <h2 className="text-[16px] font-bold text-foreground">Nuevo cliente</h2>
+          <p className="mt-0.5 text-[12.5px] text-muted">Solo el nombre es obligatorio.</p>
+        </div>
+
+        <div className="space-y-3 px-6 py-5">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">
+              Nombre <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              autoFocus
+              className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">
+              Teléfono
+            </label>
+            <input
+              type="text"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+            />
+          </div>
+          {error && <p className="text-[12.5px] font-semibold text-red-600">{error}</p>}
+        </div>
+
+        <div className="flex gap-2 border-t border-card-border px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 rounded-lg border border-card-border bg-white py-2 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !nombre.trim()}
+            className="flex-1 rounded-lg bg-accent py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {submitting ? "Creando…" : "Crear y seleccionar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Cerrar caja modal ─────────────────────────────────────────── */
+
+function CerrarCajaModal({
+  cajaId, onClose, onCerrada,
+}: {
+  cajaId: string;
+  onClose: () => void;
+  onCerrada: () => void;
+}) {
+  const { cerrar } = useCajaStore();
+  const { data: reporte, loading: reporteLoading } = useCierreCajaReporte(cajaId);
+
+  const [cashCounted, setCashCounted] = useState("");
+  const [note,        setNote]        = useState("");
+  const [submitting,  setSubmitting]  = useState(false);
+  const [error,       setError]       = useState<string | null>(null);
+
+  const totales     = reporte?.totales;
+  const efectivoRow = reporte?.porMetodo.find((r) => r.metodoPago === "EFECTIVO");
+  const efectivoAmt = efectivoRow?.total ?? 0;
+
+  const cashNum  = parseFloat(cashCounted) || null;
+  const cashDiff = cashNum !== null ? cashNum - efectivoAmt : null;
+
+  async function handleConfirm() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await cerrar(cashNum ?? 0, note || undefined);
+      onCerrada();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Error al cerrar la caja");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-[3px]"
+         onClick={() => !submitting && onClose()}>
+      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+           onClick={(e) => e.stopPropagation()}
+           style={{ animation: "fadeSlideIn .2s ease" }}>
+
+        {/* Header */}
+        <div className="flex items-start justify-between border-b border-card-border px-6 py-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-sidebar">
+              <IconCloseLock className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-[16px] font-bold text-foreground">Cerrar caja del día</h2>
+              <p className="mt-0.5 text-[12.5px] text-muted">
+                Registra el resumen definitivo del turno. No se podrán agregar más ventas.
+              </p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} disabled={submitting}
+                  className="rounded-md p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground">
+            <IconX className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          {reporteLoading ? (
+            <div className="flex items-center justify-center py-10 text-sm text-muted">Cargando resumen…</div>
+          ) : (
+            <>
+              {/* KPIs */}
+              <div className="grid grid-cols-3 gap-2">
+                <CerrarKPI label="Facturado"
+                  value={fmtARS(totales?.totalFact ?? 0)}
+                  sub={`${totales?.cantVentas ?? 0} venta${(totales?.cantVentas ?? 0) !== 1 ? "s" : ""}`} accent />
+                <CerrarKPI label="Ticket promedio"
+                  value={(totales?.cantVentas ?? 0) > 0 ? fmtARS(totales?.ticketPromedio ?? 0) : "—"}
+                  sub="Por venta" />
+                <CerrarKPI label="Efectivo en caja"
+                  value={fmtARS(efectivoAmt)}
+                  sub={`${efectivoRow?.cantidad ?? 0} cobros`} />
+              </div>
+
+              {/* Desglose */}
+              {reporte && reporte.porMetodo.length > 0 && (
+                <div>
+                  <p className="mb-2 text-[10.5px] font-semibold uppercase tracking-[.1em] text-muted">Desglose por método</p>
+                  <div className="space-y-2 rounded-xl border border-card-border p-3.5">
+                    {reporte.porMetodo.map((row) => {
+                      const cfg = METHOD_DISPLAY[METHOD_FROM_API[row.metodoPago]];
+                      const totalFact = totales?.totalFact ?? 0;
+                      const pct = totalFact > 0 ? Math.round((row.total / totalFact) * 100) : 0;
+                      return (
+                        <div key={row.metodoPago}>
+                          <div className="mb-1 flex items-center justify-between text-[12px] font-semibold">
+                            <span style={{ color: cfg.color }}>{cfg.label}</span>
+                            <span className="font-mono text-foreground">{fmtARS(row.total)} <span className="text-muted">· {pct}%</span></span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                            <div className="h-full rounded-full transition-all duration-300"
+                                 style={{ width: `${pct}%`, background: cfg.color }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Anulaciones */}
+              {(totales?.anuladasCount ?? 0) > 0 && (
+                <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+                  <div>
+                    <p className="text-[12px] font-bold text-red-700">Anulaciones</p>
+                    <p className="text-[11.5px] text-red-600/80">{totales!.anuladasCount} venta{totales!.anuladasCount !== 1 ? "s" : ""} anulada{totales!.anuladasCount !== 1 ? "s" : ""}</p>
+                  </div>
+                  <p className="font-mono text-[14px] font-extrabold text-red-600">{fmtARS(totales!.totalAnulado)}</p>
+                </div>
+              )}
+
+              {/* Conteo de efectivo */}
+              <div>
+                <p className="mb-2 text-[10.5px] font-semibold uppercase tracking-[.1em] text-muted">Conteo de efectivo</p>
+                <div className="space-y-3 rounded-xl border border-card-border p-4">
+                  <div className="grid grid-cols-3 gap-3">
+                    <CashSlot label="Sistema" value={fmtARS(efectivoAmt)} muted />
+                    <CashSlot label="Contado" value={cashNum !== null ? fmtARS(cashNum) : "—"}
+                      tone={cashNum !== null ? (cashDiff! >= 0 ? "ok" : "bad") : "muted"} />
+                    <CashSlot label="Diferencia"
+                      value={cashDiff === null ? "—" : cashDiff === 0 ? "Exacto" : `${cashDiff > 0 ? "+" : ""}${fmtARS(cashDiff)}`}
+                      tone={cashDiff === null ? "muted" : cashDiff > 0 ? "ok" : cashDiff < 0 ? "bad" : "neutral"} />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10.5px] font-bold uppercase tracking-[.06em] text-foreground/60">
+                      ¿Cuánto contaste en la caja?
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-base font-bold text-muted">$</span>
+                      <input
+                        type="number" min={0} value={cashCounted}
+                        onChange={(e) => setCashCounted(e.target.value)}
+                        placeholder={String(Math.round(efectivoAmt))}
+                        autoFocus
+                        className="h-[44px] w-full rounded-lg border border-card-border bg-white pl-8 font-mono text-[16px] font-bold text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Notas */}
+              <div className="space-y-1.5">
+                <label className="text-[10.5px] font-bold uppercase tracking-[.06em] text-foreground/60">
+                  Observaciones <span className="font-medium normal-case tracking-normal text-muted">(opcional)</span>
+                </label>
+                <textarea
+                  value={note} onChange={(e) => setNote(e.target.value)} rows={2}
+                  placeholder="Ej: Faltante por cambio de $500 que quedó pendiente…"
+                  className="w-full resize-none rounded-lg border border-card-border bg-white px-3 py-2 text-[13px] text-foreground placeholder:text-muted outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+                />
+              </div>
+
+              {error && <p className="text-[12.5px] font-semibold text-red-600">{error}</p>}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-2 border-t border-card-border px-6 py-4">
+          <button type="button" onClick={onClose} disabled={submitting}
+                  className="flex-1 rounded-lg border border-card-border bg-white py-2.5 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors">
+            Cancelar
+          </button>
+          <button type="button" onClick={handleConfirm} disabled={submitting || reporteLoading}
+                  className="flex flex-[2] items-center justify-center gap-2 rounded-lg bg-sidebar py-2.5 text-sm font-extrabold text-white hover:bg-sidebar-dark transition-colors disabled:opacity-50">
+            <IconCloseLock className="h-4 w-4" />
+            {submitting ? "Cerrando…" : "Cerrar caja del día"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CerrarKPI({ label, value, sub, accent }: { label: string; value: string; sub: string; accent?: boolean }) {
+  return (
+    <div className="rounded-lg border border-card-border bg-gray-50/60 px-3 py-2.5">
+      <p className="text-[10px] font-bold uppercase tracking-[.06em] text-muted">{label}</p>
+      <p className={`mt-0.5 font-mono text-[15px] font-extrabold leading-tight ${accent ? "text-accent" : "text-foreground"}`}>{value}</p>
+      <p className="text-[10.5px] text-muted">{sub}</p>
+    </div>
+  );
+}
+
+function CashSlot({ label, value, tone, muted }: { label: string; value: string; tone?: "ok" | "bad" | "neutral" | "muted"; muted?: boolean }) {
+  const t = tone ?? (muted ? "muted" : "neutral");
+  const cls =
+    t === "ok"      ? "text-emerald-600" :
+    t === "bad"     ? "text-red-500"     :
+    t === "muted"   ? "text-muted"       :
+                      "text-foreground";
+  return (
+    <div className="rounded-lg border border-card-border bg-white px-3 py-2 text-center">
+      <p className="text-[10px] font-bold uppercase tracking-[.06em] text-muted">{label}</p>
+      <p className={`mt-0.5 font-mono text-[13px] font-extrabold leading-tight ${cls}`}>{value}</p>
     </div>
   );
 }
@@ -693,18 +1285,28 @@ export default function CajaPage() {
 /* ── Abrir caja modal ──────────────────────────────────────────── */
 
 function AbrirCajaModal({
-  onAbrir, loading, error,
+  onAbrir, onClose, loading, error,
 }: {
-  onAbrir: (monto: number) => void; loading: boolean; error: string | null;
+  onAbrir: (monto: number) => void;
+  onClose: () => void;
+  loading: boolean;
+  error: string | null;
 }) {
   const [monto, setMonto] = useState("");
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[3px]">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[3px]"
+         onClick={() => !loading && onClose()}>
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl"
+           onClick={(e) => e.stopPropagation()}
+           style={{ animation: "fadeSlideIn .2s ease" }}>
+        <button type="button" onClick={onClose} disabled={loading}
+                className="absolute right-3 top-3 rounded-md p-1 text-muted transition-colors hover:bg-gray-100 hover:text-foreground disabled:opacity-40">
+          <IconX className="h-4 w-4" />
+        </button>
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-sidebar">
           <IconCash className="h-6 w-6 text-white" />
         </div>
-        <h2 className="text-[18px] font-extrabold tracking-tight text-foreground">Abrí la caja primero</h2>
+        <h2 className="text-[18px] font-extrabold tracking-tight text-foreground">Abrir caja</h2>
         <p className="mt-1.5 text-[13.5px] font-medium leading-relaxed text-muted">
           Ingresá el monto inicial de efectivo para comenzar el turno.
         </p>
@@ -742,27 +1344,29 @@ function AbrirCajaModal({
 
 /* ── Method button ─────────────────────────────────────────────── */
 
-function MethodBtn({ method, selected, onSelect, fullWidth }: {
-  method: PayMethod; selected: boolean; onSelect: () => void; fullWidth?: boolean;
+function MethodBtn({ method, selected, onSelect, disabled }: {
+  method: PayMethod; selected: boolean; onSelect: () => void; disabled?: boolean;
 }) {
   const cfg = METHOD_DISPLAY[method];
   return (
-    <button type="button" onClick={onSelect}
-            className={[
-              "flex w-full items-center gap-2 rounded-xl border-2 px-3 py-2.5 transition-all",
-              selected ? "shadow-sm" : "border-card-border bg-white hover:border-gray-300",
-              fullWidth ? "col-span-2" : "",
-            ].join(" ")}
-            style={selected ? { borderColor: cfg.border, background: cfg.bg } : undefined}>
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md"
-           style={{ background: selected ? cfg.color : "rgba(0,0,0,.05)" }}>
-        <span className="font-mono text-[9px] font-extrabold" style={{ color: selected ? "white" : "#888" }}>
-          {cfg.kbd}
-        </span>
-      </div>
-      <span className={`text-[12.5px] font-semibold ${selected ? "" : "text-foreground/70"}`}
-            style={selected ? { color: cfg.color } : undefined}>
-        {cfg.label}
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={[
+        "relative flex h-[54px] w-full flex-col items-center justify-center rounded-lg border text-[12px] font-semibold transition-all",
+        selected
+          ? "text-white shadow-sm"
+          : "border-card-border bg-white text-foreground/75 hover:border-gray-300 hover:bg-gray-50",
+        disabled ? "cursor-not-allowed opacity-30 hover:border-card-border hover:bg-white" : "",
+      ].join(" ")}
+      style={selected ? { background: cfg.color, borderColor: cfg.color } : undefined}
+    >
+      <span className="leading-tight">{cfg.label}</span>
+      <span
+        className={`mt-0.5 font-mono text-[9.5px] tracking-wide ${selected ? "text-white/70" : "text-muted/60"}`}
+      >
+        {cfg.kbd}
       </span>
     </button>
   );
@@ -906,10 +1510,41 @@ function IconCash({ className }: { className?: string }) {
     </svg>
   );
 }
+function IconPlus({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2} strokeLinecap="round">
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+function IconUser({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="6" r="2.6" />
+      <path d="M3 13c0-2.5 2.2-4 5-4s5 1.5 5 4" />
+    </svg>
+  );
+}
 function IconExpense({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M8 2v12M4 6l4-4 4 4M4 13h8" />
+    </svg>
+  );
+}
+function IconLockSmall({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5 7V5a3 3 0 016 0v2" />
+    </svg>
+  );
+}
+function IconCloseLock({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="5" y="11" width="14" height="11" rx="2" />
+      <path d="M17 11V7a5 5 0 00-10 0v4" />
     </svg>
   );
 }

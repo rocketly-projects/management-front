@@ -63,7 +63,10 @@ export function useDashboardReporte(fecha?: string) {
     }
   }, [fecha]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetch();
+  }, [fetch]);
 
   const isEmpty = !loading && !error && data === null;
   return { data, loading, error, isEmpty, refetch: fetch };

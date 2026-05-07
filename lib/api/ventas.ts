@@ -15,6 +15,7 @@ export interface CreateVentaPayload {
   descuento?: number;
   metodoPago: MetodoPago;
   cajaId: string;
+  clienteId?: string;
 }
 
 export function getVentas(filters?: VentaFilters): Promise<PaginatedResponse<Venta>> {

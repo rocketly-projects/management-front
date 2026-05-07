@@ -72,7 +72,10 @@ export function useCierreCajaReporte(cajaId: string | null) {
     }
   }, [cajaId]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetch();
+  }, [fetch]);
 
   return { data, loading, error, refetch: fetch };
 }

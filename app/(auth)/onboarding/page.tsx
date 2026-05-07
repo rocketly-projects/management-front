@@ -737,7 +737,7 @@ function Step4({
         Todo listo, {form.nombreDueno || "bienvenido"}
       </h1>
       <p className={sub}>
-        Revisá los datos antes de crear tu comercio. Podés editar cualquier sección haciendo clic en "Editar".
+        Revisá los datos antes de crear tu comercio. Podés editar cualquier sección haciendo clic en &ldquo;Editar&rdquo;.
       </p>
 
       {/* Comercio */}

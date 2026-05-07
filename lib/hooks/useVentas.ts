@@ -15,6 +15,7 @@ export interface VentasFiltros {
 }
 
 export function useVentas(filtros: VentasFiltros = {}) {
+  const { page, limit, estado, cajaId, desde, hasta } = filtros;
   const [data, setData] = useState<PaginatedResponse<Venta>>({
     data: [],
     total: 0,
@@ -28,17 +29,17 @@ export function useVentas(filtros: VentasFiltros = {}) {
     setLoading(true);
     setError(null);
     try {
-      const res = await getVentas(filtros);
+      const res = await getVentas({ page, limit, estado, cajaId, desde, hasta });
       setData(res);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Error al cargar ventas");
     } finally {
       setLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(filtros)]);
+  }, [page, limit, estado, cajaId, desde, hasta]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetch();
   }, [fetch]);
 
