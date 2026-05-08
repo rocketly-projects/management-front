@@ -16,6 +16,7 @@ const PAYMENTS: Record<MetodoPago, { label: string; color: string; bg: string; a
   CREDITO:       { label: "Crédito",       color: "#5a3a8a", bg: "#f0eafa", abbr: "CR" },
   TRANSFERENCIA: { label: "Transferencia", color: "#6a4a1a", bg: "#faf0e0", abbr: "TR" },
   MERCADO_PAGO:  { label: "Mercado Pago",  color: "#0055ff", bg: "#e6ecff", abbr: "MP" },
+  FIADO:         { label: "Fiado",         color: "#b45309", bg: "#fef3c7", abbr: "FI" },
 };
 
 /* ── Helpers ───────────────────────────────────────────────────── */
