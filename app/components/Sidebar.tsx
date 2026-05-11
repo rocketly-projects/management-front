@@ -156,7 +156,7 @@ export default function Sidebar() {
       <div className="m-3 rounded-xl bg-white/5 px-4 py-3">
         <p className="text-xs text-muted">Espacio de trabajo</p>
         <p className="mt-0.5 text-sm font-medium text-white">
-          {perfil?.nombreNegocio ?? "Mi Negocio"}
+          {perfil?.tenantNombreDisplay ?? "Mi Negocio"}
         </p>
         {perfil?.nombreDueno && (
           <p className="mt-0.5 text-xs text-muted">{perfil.nombreDueno}</p>
