@@ -17,7 +17,8 @@ export interface Tenant {
 export interface Perfil {
   id: string;
   tenantId: string;
-  nombreNegocio: string;
+  tenantNombre: string;
+  tenantNombreDisplay: string;
   nombreDueno: string;
   telefono: string | null;
   direccion: string | null;
