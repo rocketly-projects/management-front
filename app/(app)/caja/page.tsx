@@ -5,6 +5,8 @@ import { useProductosStore } from "@/lib/store/productosStore";
 import { useCajaStore } from "@/lib/store/cajaStore";
 import { useAuthStore } from "@/lib/store/authStore";
 import { createVenta } from "@/lib/api/ventas";
+import { getTicket, imprimirTicket } from "@/lib/api/tickets";
+import type { TicketData, ImprimirConfig } from "@/lib/api/tickets";
 import { getGastos, createGasto } from "@/lib/api/caja";
 import { getClientes, createCliente } from "@/lib/api/clientes";
 import { ApiError } from "@/lib/api/client";
@@ -27,6 +29,7 @@ type PayMethod = "efectivo" | "debito" | "credito" | "transf" | "mp" | "fiado";
 type DiscType  = "pct" | "amt";
 
 interface SaleModal {
+  ventaId: string;
   num: number; method: PayMethod; total: number;
   discAmt: number; change: number | null;
   items: CartItem[];
@@ -310,6 +313,7 @@ export default function CajaPage() {
         ...(selectedCliente ? { clienteId: selectedCliente.id } : {}),
       });
       setModal({
+        ventaId: venta.id,
         num: venta.numero,
         method: effectiveMethod,
         total: venta.total,
@@ -803,7 +807,7 @@ export default function CajaPage() {
 
       {/* ── Status bar ──────────────────────────────────────── */}
       <div className="flex h-6 flex-shrink-0 items-center gap-4 bg-sidebar px-4 text-[11px] text-white/40">
-        <StatusItem label="Comercio" value={perfil?.nombreNegocio ?? "—"} />
+        <StatusItem label="Comercio" value={perfil?.tenantNombreDisplay || perfil?.tenantNombre || "—"} />
         <StatusItem
           label="Caja"
           value={cajaLoading ? "Cargando…" : cajaActiva ? "Abierta" : "Cerrada"}
@@ -1379,61 +1383,338 @@ function SuccessModal({ sale, onNuevaVenta }: { sale: SaleModal; onNuevaVenta: (
   const shown = sale.items.slice(0, 4);
   const extra = sale.items.length - 4;
 
+  const [ticketOpen,    setTicketOpen]    = useState(false);
+  const [ticketData,    setTicketData]    = useState<TicketData | null>(null);
+  const [ticketLoading, setTicketLoading] = useState(false);
+  const [ticketError,   setTicketError]   = useState<string | null>(null);
+
+  async function handleVerTicket() {
+    if (ticketData) { setTicketOpen(true); return; }
+    setTicketLoading(true);
+    setTicketError(null);
+    try {
+      const data = await getTicket(sale.ventaId);
+      setTicketData(data);
+      setTicketOpen(true);
+    } catch {
+      setTicketError("No se pudo cargar el ticket");
+    } finally {
+      setTicketLoading(false);
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
-         onClick={onNuevaVenta}>
-      <div className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white shadow-2xl"
-           onClick={(e) => e.stopPropagation()}
-           style={{ animation: "fadeSlideIn .25s ease" }}>
-        <div className="flex items-center gap-3 border-b border-card-border px-5 py-4">
-          <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100">
-            <IconCheck className="h-5 w-5 text-emerald-600" />
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+           onClick={onNuevaVenta}>
+        <div className="w-full max-w-[420px] overflow-hidden rounded-2xl bg-white shadow-2xl"
+             onClick={(e) => e.stopPropagation()}
+             style={{ animation: "fadeSlideIn .25s ease" }}>
+          <div className="flex items-center gap-3 border-b border-card-border px-5 py-4">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100">
+              <IconCheck className="h-5 w-5 text-emerald-600" />
+            </div>
+            <div>
+              <p className="text-[16px] font-bold text-foreground">Cobrado</p>
+              <p className="text-[12.5px] text-muted">
+                Venta #{String(sale.num).padStart(4,"0")} registrada correctamente
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-[16px] font-bold text-foreground">Cobrado</p>
-            <p className="text-[12.5px] text-muted">
-              Venta #{String(sale.num).padStart(4,"0")} registrada correctamente
+          <div className="px-5 py-4 space-y-2">
+            {shown.map((item, i) => (
+              <div key={i} className="flex justify-between text-[13px]">
+                <span className="text-foreground/80">{item.name} × {item.qty}</span>
+                <span className="font-mono font-semibold">{fmtARS(item.price * item.qty)}</span>
+              </div>
+            ))}
+            {extra > 0 && <p className="text-[12px] text-muted">y {extra} producto{extra > 1 ? "s" : ""} más…</p>}
+            {sale.discAmt > 0 && (
+              <div className="flex justify-between text-[13px] text-emerald-600">
+                <span>Descuento</span>
+                <span className="font-mono font-semibold">−{fmtARS(sale.discAmt)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-[13px]">
+              <span className="text-muted">Método</span>
+              <span className="font-semibold" style={{ color: cfg.color }}>{cfg.label}</span>
+            </div>
+            {sale.change !== null && (
+              <div className="flex justify-between text-[13px]">
+                <span className="text-muted">Vuelto</span>
+                <span className="font-mono font-semibold text-emerald-600">{fmtARS(Math.max(0, sale.change))}</span>
+              </div>
+            )}
+            {ticketError && (
+              <p className="text-[12px] font-semibold text-red-500">{ticketError}</p>
+            )}
+          </div>
+          <div className="flex items-center justify-between border-t border-b border-card-border px-5 py-3">
+            <span className="text-[14px] font-bold text-foreground">Total cobrado</span>
+            <span className="font-mono text-[28px] font-extrabold text-foreground">{fmtARS(sale.total)}</span>
+          </div>
+          <div className="flex gap-2.5 px-5 py-4">
+            <button
+              type="button"
+              onClick={handleVerTicket}
+              disabled={ticketLoading}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-card-border py-2.5 text-sm font-semibold text-foreground hover:bg-gray-50 disabled:opacity-60 transition-colors"
+            >
+              <IconReceipt className="h-4 w-4" />
+              {ticketLoading ? "Cargando…" : "Ticket"}
+            </button>
+            <button type="button" onClick={onNuevaVenta}
+                    className="flex-1 rounded-xl bg-accent py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity">
+              Nueva venta
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {ticketOpen && ticketData && (
+        <TicketModal
+          data={ticketData}
+          onClose={() => setTicketOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+/* ── Ticket modal ──────────────────────────────────────────────── */
+
+const METODO_TICKET: Record<string, string> = {
+  EFECTIVO:      "Efectivo",
+  DEBITO:        "Tarjeta Débito",
+  CREDITO:       "Tarjeta Crédito",
+  TRANSFERENCIA: "Transferencia",
+  MERCADO_PAGO:  "Mercado Pago",
+  FIADO:         "Fiado",
+};
+
+function TicketModal({ data, onClose }: { data: TicketData; onClose: () => void }) {
+  const { negocio, venta } = data;
+
+  const [printOpen,    setPrintOpen]    = useState(false);
+  const [printing,     setPrinting]     = useState(false);
+  const [printError,   setPrintError]   = useState<string | null>(null);
+  const [printSuccess, setPrintSuccess] = useState(false);
+
+  // Config de impresión
+  const [conexion, setConexion] = useState<"network" | "usb">("network");
+  const [ip,       setIp]       = useState("");
+  const [puerto,   setPuerto]   = useState("9100");
+
+  const fecha = new Date(venta.creadoEn).toLocaleDateString("es-AR", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+  });
+  const hora = new Date(venta.creadoEn).toLocaleTimeString("es-AR", {
+    hour: "2-digit", minute: "2-digit",
+  });
+
+  async function handleImprimir() {
+    setPrinting(true);
+    setPrintError(null);
+    setPrintSuccess(false);
+    try {
+      const config: ImprimirConfig = {
+        conexion,
+        ...(conexion === "network" ? { ip: ip.trim(), puerto: parseInt(puerto) || 9100 } : {}),
+      };
+      await imprimirTicket(venta.id, config);
+      setPrintSuccess(true);
+    } catch (e: any) {
+      setPrintError(e?.message ?? "Error al imprimir");
+    } finally {
+      setPrinting(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[92vh] w-full max-w-[400px] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "fadeSlideIn .2s ease" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-card-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <IconReceipt className="h-5 w-5 text-muted" />
+            <p className="text-[15px] font-bold text-foreground">
+              Ticket #{String(venta.numero).padStart(4, "0")}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-muted hover:bg-gray-100 hover:text-foreground transition-colors"
+          >
+            <IconX className="h-4 w-4" />
+          </button>
         </div>
-        <div className="px-5 py-4 space-y-2">
-          {shown.map((item, i) => (
-            <div key={i} className="flex justify-between text-[13px]">
-              <span className="text-foreground/80">{item.name} × {item.qty}</span>
-              <span className="font-mono font-semibold">{fmtARS(item.price * item.qty)}</span>
+
+        {/* Previsualización del ticket — estilo rollo térmico */}
+        <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+          <div
+            className="mx-auto max-w-[300px] rounded-lg bg-white p-5 shadow-sm"
+            style={{ fontFamily: "monospace", fontSize: "12px", lineHeight: "1.6" }}
+          >
+            {/* Negocio */}
+            <div className="mb-2 text-center">
+              <p className="text-[15px] font-extrabold uppercase">{negocio.nombre}</p>
+              {negocio.taxId     && <p>CUIT: {negocio.taxId}</p>}
+              {negocio.direccion && <p>{negocio.direccion}</p>}
+              {negocio.telefono  && <p>Tel: {negocio.telefono}</p>}
             </div>
-          ))}
-          {extra > 0 && <p className="text-[12px] text-muted">y {extra} producto{extra > 1 ? "s" : ""} más…</p>}
-          {sale.discAmt > 0 && (
-            <div className="flex justify-between text-[13px] text-emerald-600">
-              <span>Descuento</span>
-              <span className="font-mono font-semibold">−{fmtARS(sale.discAmt)}</span>
+
+            <p className="border-t border-dashed border-gray-300 pt-2 text-center text-[11px] text-gray-400">
+              {"─".repeat(30)}
+            </p>
+
+            {/* Número y fecha */}
+            <div className="flex justify-between py-1">
+              <span className="font-bold">Ticket #{String(venta.numero).padStart(4, "0")}</span>
+              <span className="text-gray-500">{fecha} {hora}</span>
             </div>
-          )}
-          <div className="flex justify-between text-[13px]">
-            <span className="text-muted">Método</span>
-            <span className="font-semibold" style={{ color: cfg.color }}>{cfg.label}</span>
+
+            <p className="border-t border-dashed border-gray-300" />
+
+            {/* Items */}
+            <div className="py-2 space-y-1.5">
+              {venta.items.map((item) => (
+                <div key={item.id}>
+                  <p className="font-semibold">{item.producto.nombre}</p>
+                  <div className="flex justify-between text-[11px] text-gray-600">
+                    <span>{item.cantidad} x {fmtARS(item.precioUnitario)}</span>
+                    <span className="font-semibold text-foreground">{fmtARS(item.subtotal)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="border-t border-dashed border-gray-300" />
+
+            {/* Totales */}
+            <div className="py-2 space-y-1">
+              {venta.descuento > 0 && (
+                <>
+                  <div className="flex justify-between text-[11px]">
+                    <span>Subtotal</span>
+                    <span>{fmtARS(venta.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-[11px] text-emerald-600">
+                    <span>Descuento</span>
+                    <span>-{fmtARS(venta.descuento)}</span>
+                  </div>
+                </>
+              )}
+              <div className="flex justify-between text-[14px] font-extrabold">
+                <span>TOTAL</span>
+                <span>{fmtARS(venta.total)}</span>
+              </div>
+            </div>
+
+            <p className="border-t border-dashed border-gray-300" />
+
+            {/* Método + cierre */}
+            <div className="pt-2 text-center">
+              <p className="text-[11px] font-semibold uppercase">
+                {METODO_TICKET[venta.metodoPago] ?? venta.metodoPago}
+              </p>
+              <p className="mt-2 text-[10px] text-gray-400">{"·".repeat(30)}</p>
+              <p className="mt-1 text-[11px] text-gray-500">¡Gracias por su compra!</p>
+            </div>
           </div>
-          {sale.change !== null && (
-            <div className="flex justify-between text-[13px]">
-              <span className="text-muted">Vuelto</span>
-              <span className="font-mono font-semibold text-emerald-600">{fmtARS(Math.max(0, sale.change))}</span>
+        </div>
+
+        {/* Configuración de impresión (colapsable) */}
+        <div className="border-t border-card-border">
+          <button
+            type="button"
+            onClick={() => setPrintOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-5 py-3 text-[12.5px] font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <IconPrinter className="h-3.5 w-3.5 text-muted" />
+              Configuración de impresión
+            </span>
+            <span className={`text-muted transition-transform ${printOpen ? "rotate-180" : ""}`}>▾</span>
+          </button>
+
+          {printOpen && (
+            <div className="border-t border-card-border bg-gray-50/60 px-5 py-4 space-y-3">
+              {/* Tipo de conexión */}
+              <div className="flex gap-2">
+                {(["network", "usb"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setConexion(t)}
+                    className={[
+                      "flex-1 rounded-lg border py-2 text-[12px] font-semibold transition-colors",
+                      conexion === t
+                        ? "border-accent bg-accent text-white"
+                        : "border-card-border bg-white text-foreground hover:border-gray-300",
+                    ].join(" ")}
+                  >
+                    {t === "network" ? "🌐 Red / Ethernet" : "🔌 USB directo"}
+                  </button>
+                ))}
+              </div>
+
+              {/* IP (solo para network) */}
+              {conexion === "network" && (
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wide text-foreground/60">
+                      IP de la impresora
+                    </label>
+                    <input
+                      type="text"
+                      value={ip}
+                      onChange={(e) => setIp(e.target.value)}
+                      placeholder="ej: 192.168.1.100"
+                      className="h-9 w-full rounded-lg border border-card-border bg-white px-3 font-mono text-[13px] outline-none focus:border-accent"
+                    />
+                  </div>
+                  <div className="w-20 space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-wide text-foreground/60">
+                      Puerto
+                    </label>
+                    <input
+                      type="text"
+                      value={puerto}
+                      onChange={(e) => setPuerto(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-card-border bg-white px-3 font-mono text-[13px] outline-none focus:border-accent"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {conexion === "usb" && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800">
+                  La impresora debe estar conectada por USB a esta PC. En Windows puede requerir instalar el driver WinUSB con Zadig.
+                </p>
+              )}
+
+              {printError   && <p className="text-[12px] font-semibold text-red-600">{printError}</p>}
+              {printSuccess && <p className="text-[12px] font-semibold text-emerald-600">✓ Ticket impreso correctamente</p>}
+
+              <button
+                type="button"
+                onClick={handleImprimir}
+                disabled={printing || (conexion === "network" && !ip.trim())}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-sidebar py-2.5 text-[13px] font-bold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+              >
+                <IconPrinter className="h-4 w-4" />
+                {printing ? "Imprimiendo…" : "Imprimir ticket"}
+              </button>
             </div>
           )}
-        </div>
-        <div className="flex items-center justify-between border-t border-b border-card-border px-5 py-3">
-          <span className="text-[14px] font-bold text-foreground">Total cobrado</span>
-          <span className="font-mono text-[28px] font-extrabold text-foreground">{fmtARS(sale.total)}</span>
-        </div>
-        <div className="flex gap-2.5 px-5 py-4">
-          <button type="button"
-                  className="flex-1 rounded-xl border border-card-border py-2.5 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors">
-            Ticket
-          </button>
-          <button type="button" onClick={onNuevaVenta}
-                  className="flex-1 rounded-xl bg-accent py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity">
-            Nueva venta
-          </button>
         </div>
       </div>
     </div>
@@ -1545,6 +1826,22 @@ function IconCloseLock({ className }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <rect x="5" y="11" width="14" height="11" rx="2" />
       <path d="M17 11V7a5 5 0 00-10 0v4" />
+    </svg>
+  );
+}
+function IconReceipt({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2v20l3-2 2.5 2L12 20l2.5 2L17 20l3 2V2" />
+      <path d="M8 7h8M8 11h8M8 15h4" />
+    </svg>
+  );
+}
+function IconPrinter({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" />
+      <rect x="6" y="14" width="12" height="8" />
     </svg>
   );
 }
