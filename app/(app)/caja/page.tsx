@@ -7,6 +7,7 @@ import { useAuthStore } from "@/lib/store/authStore";
 import { createVenta } from "@/lib/api/ventas";
 import { getTicket, imprimirTicket } from "@/lib/api/tickets";
 import type { TicketData, ImprimirConfig } from "@/lib/api/tickets";
+import { descargarTicketPdf, whatsappTicketUrl, mailtoTicketUrl } from "@/lib/utils/ticket-pdf";
 import { getGastos, createGasto } from "@/lib/api/caja";
 import { getClientes, createCliente } from "@/lib/api/clientes";
 import { ApiError } from "@/lib/api/client";
@@ -1631,6 +1632,34 @@ function TicketModal({ data, onClose }: { data: TicketData; onClose: () => void 
           </div>
         </div>
 
+        {/* Acciones: PDF, WhatsApp, Email */}
+        <div className="flex gap-2 border-t border-card-border px-5 py-3">
+          <button
+            type="button"
+            onClick={() => descargarTicketPdf(data)}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-card-border py-2.5 text-[12.5px] font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            <IconDownload className="h-3.5 w-3.5" />
+            PDF
+          </button>
+          <a
+            href={whatsappTicketUrl(data)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-card-border py-2.5 text-[12.5px] font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            <IconWhatsApp className="h-3.5 w-3.5" />
+            WhatsApp
+          </a>
+          <a
+            href={mailtoTicketUrl(data)}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-card-border py-2.5 text-[12.5px] font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            <IconMail className="h-3.5 w-3.5" />
+            Email
+          </a>
+        </div>
+
         {/* Configuración de impresión (colapsable) */}
         <div className="border-t border-card-border">
           <button
@@ -1774,6 +1803,28 @@ function IconTrash({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 14 14" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 3.5h10M4.5 3.5V2.5a1 1 0 011-1h3a1 1 0 011 1v1M3 3.5l.5 8a1 1 0 001 1h5a1 1 0 001-1l.5-8" />
+    </svg>
+  );
+}
+function IconDownload({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 2v8M5 7l3 3 3-3M2 13h12" />
+    </svg>
+  );
+}
+function IconWhatsApp({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 7.5c0 3.04-2.69 5.5-6 5.5a6.54 6.54 0 01-2.9-.68L2 13.5l.94-2.9A5.27 5.27 0 012 7.5C2 4.46 4.69 2 8 2s6 2.46 6 5.5z" />
+    </svg>
+  );
+}
+function IconMail({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+      <path d="M1.5 5.5l6.5 4 6.5-4" />
     </svg>
   );
 }
