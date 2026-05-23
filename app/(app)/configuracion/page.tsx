@@ -13,7 +13,6 @@ export default function ConfiguracionPage() {
   const { perfil, token, setAuth } = useAuthStore();
 
   const [perfilForm, setPerfilForm] = useState<Partial<Perfil>>({
-    nombreNegocio: "",
     nombreDueno: "",
     telefono: "",
     direccion: "",
@@ -32,7 +31,6 @@ export default function ConfiguracionPage() {
     getPerfil()
       .then((p) => {
         setPerfilForm({
-          nombreNegocio: p.nombreNegocio,
           nombreDueno: p.nombreDueno,
           telefono: p.telefono ?? "",
           direccion: p.direccion ?? "",
@@ -67,7 +65,6 @@ export default function ConfiguracionPage() {
 
   function validatePerfil(): boolean {
     const next: Record<string, string> = {};
-    if (!perfilForm.nombreNegocio?.trim()) next.nombreNegocio = "El nombre del negocio es obligatorio";
     if (!perfilForm.nombreDueno?.trim()) next.nombreDueno = "El nombre del dueño es obligatorio";
     if (perfilForm.telefono && !/^[0-9+()\-\s]{6,}$/.test(perfilForm.telefono)) {
       next.telefono = "Teléfono inválido";
@@ -82,11 +79,10 @@ export default function ConfiguracionPage() {
     setSavingPerfil(true);
     try {
       const updated = await updatePerfil({
-        nombreNegocio: perfilForm.nombreNegocio,
         nombreDueno: perfilForm.nombreDueno,
-        telefono: perfilForm.telefono || null,
-        direccion: perfilForm.direccion || null,
-        taxId: perfilForm.taxId || null,
+        telefono: perfilForm.telefono || undefined,
+        direccion: perfilForm.direccion || undefined,
+        taxId: perfilForm.taxId || undefined,
       });
       if (token) setAuth(token, updated);
       showToast("success", "Datos del negocio actualizados");
@@ -163,14 +159,26 @@ export default function ConfiguracionPage() {
               <SectionSkeleton />
             ) : (
               <form className="space-y-4 px-6 py-5" onSubmit={handleSavePerfil}>
-                <Field label="Nombre del negocio" required error={errors.nombreNegocio}>
-                  <input
-                    type="text"
-                    value={perfilForm.nombreNegocio ?? ""}
-                    onChange={(e) => setPerfilField("nombreNegocio", e.target.value)}
-                    className={inputCls(!!errors.nombreNegocio)}
-                    placeholder="Ej: Kiosco La Esquina"
-                  />
+                <Field label="Nombre del negocio">
+                  <div className="flex h-10 w-full items-center gap-2 rounded-[9px] border border-card-border bg-main-bg px-3">
+                    <span className="flex-1 text-sm font-medium text-foreground">
+                      {perfil?.tenantNombreDisplay ?? "—"}
+                    </span>
+                    <span className="rounded-md bg-card-border/60 px-2 py-0.5 text-[11px] font-semibold text-muted">
+                      Solo lectura
+                    </span>
+                  </div>
+                  <p className="text-[11.5px] text-muted">
+                    Tu URL de catálogo:{" "}
+                    <a
+                      href={`/${perfil?.tenantNombre}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-accent hover:underline"
+                    >
+                      /{perfil?.tenantNombre}
+                    </a>
+                  </p>
                 </Field>
 
                 <Field label="Nombre del dueño" required error={errors.nombreDueno}>
@@ -216,13 +224,7 @@ export default function ConfiguracionPage() {
                 </Field>
 
                 <div className="flex items-center justify-end gap-2.5 border-t border-card-border pt-4">
-                  <span className="mr-auto text-xs text-muted">
-                    {perfil?.nombreNegocio && (
-                      <>
-                        Mostrando: <span className="font-semibold text-foreground">{perfil.nombreNegocio}</span>
-                      </>
-                    )}
-                  </span>
+                  <span className="mr-auto text-xs text-muted" />
                   <button
                     type="submit"
                     disabled={savingPerfil}

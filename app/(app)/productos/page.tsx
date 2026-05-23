@@ -627,6 +627,23 @@ const EMPTY: Partial<Producto> = {
   precio: 0, costo: 0, stock: 0, activo: true, imagen: "",
 };
 
+async function fetchOpenFoodFacts(barcode: string): Promise<{
+  nombre: string; marca: string; imagen: string;
+} | null> {
+  const res = await fetch(
+    `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,brands,image_front_url,quantity`
+  );
+  if (!res.ok) throw new Error("red");
+  const data = await res.json();
+  if (data.status !== 1) return null;
+  const p = data.product;
+  return {
+    nombre: p.product_name ?? "",
+    marca:  p.brands ?? "",
+    imagen: p.image_front_url ?? "",
+  };
+}
+
 function ProductPanel({
   product,
   onSave,
@@ -636,21 +653,76 @@ function ProductPanel({
   onSave: (data: Partial<Producto> & { id?: string }) => void;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState<Partial<Producto>>(product ?? EMPTY);
-  const [saving, setSaving] = useState(false);
+  const isNew = !product;
+  const [form, setForm]           = useState<Partial<Producto>>(product ?? EMPTY);
+  const [saving, setSaving]       = useState(false);
+  const [step, setStep]           = useState<"scan" | "form">(isNew ? "scan" : "form");
+  const [barcode, setBarcode]     = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError]     = useState<string | null>(null);
+  const [prefilled, setPrefilled] = useState(false);
 
   function set<K extends keyof Producto>(k: K, v: Producto[K]) {
     setForm((f) => ({ ...f, [k]: v }));
   }
 
   const m = margin(form.precio ?? 0, form.costo ?? null);
-  const isNew = !product;
+
+  async function lookupBarcode(code: string) {
+    const clean = code.trim().replace(/\D/g, "");
+    if (!clean) return;
+    setLookupLoading(true);
+    setLookupError(null);
+    try {
+      const result = await fetchOpenFoodFacts(clean);
+      if (!result) {
+        setLookupError("Producto no encontrado. Podés completar los datos manualmente.");
+        return;
+      }
+      setForm((f) => ({ ...f, sku: clean, ...result }));
+      setPrefilled(true);
+      setStep("form");
+    } catch {
+      setLookupError("No se pudo conectar. Verificá tu conexión e intentá de nuevo.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }
+
+  function handleBarcodeInput(val: string) {
+    setBarcode(val);
+    setLookupError(null);
+    const digits = val.replace(/\D/g, "");
+    if (digits.length === 8 || digits.length === 13) {
+      lookupBarcode(digits);
+    }
+  }
+
+  function skipToForm() {
+    if (barcode.trim()) setForm((f) => ({ ...f, sku: barcode.trim() }));
+    setStep("form");
+  }
+
+  function goBackToScan() {
+    setPrefilled(false);
+    setLookupError(null);
+    setStep("scan");
+  }
 
   async function handleSave() {
-    if (!form.nombre?.trim()) return;
+    if (!form.nombre?.trim() || !form.precio) return;
     setSaving(true);
     try {
-      await onSave({ ...form, id: product?.id });
+      const sanitized: Partial<Producto> = {
+        ...form,
+        imagen:     form.imagen?.trim()    || undefined,
+        marca:      form.marca?.trim()     || undefined,
+        sku:        form.sku?.trim()       || undefined,
+        categoria:  form.categoria?.trim() || undefined,
+        costo:      form.costo             || undefined,
+        stockAlert: form.stockAlert        || undefined,
+      };
+      await onSave({ ...sanitized, id: product?.id });
     } finally {
       setSaving(false);
     }
@@ -661,129 +733,237 @@ function ProductPanel({
       className="fixed right-0 top-0 z-50 flex h-full w-[480px] flex-col bg-white shadow-2xl"
       style={{ animation: "slideLeft 0.2s ease" }}
     >
+      {/* Header */}
       <div className="flex flex-shrink-0 items-center justify-between border-b border-card-border px-6 py-4">
-        <h2 className="text-[15px] font-bold text-foreground">
-          {isNew ? "Nuevo producto" : "Editar producto"}
-        </h2>
+        <div className="flex items-center gap-2.5">
+          {step === "form" && isNew && (
+            <button
+              type="button"
+              onClick={goBackToScan}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-card-border text-muted hover:text-foreground transition-colors"
+              title="Volver al escaneo"
+            >
+              <IconChevronLeft className="h-4 w-4" />
+            </button>
+          )}
+          <h2 className="text-[15px] font-bold text-foreground">
+            {isNew
+              ? step === "scan" ? "Nuevo producto" : "Completar producto"
+              : "Editar producto"}
+          </h2>
+        </div>
         <button type="button" onClick={onClose}
                 className="text-muted transition-colors hover:text-foreground">
           <IconX className="h-5 w-5" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-
-        {/* Image URL — backend accepts URL, not file */}
-        <PanelField label="URL de imagen" hint="limitación conocida: no hay upload aún">
-          <input
-            type="url"
-            className={panelInput}
-            placeholder="https://ejemplo.com/imagen.jpg"
-            value={form.imagen ?? ""}
-            onChange={(e) => set("imagen", e.target.value)}
-          />
-        </PanelField>
-
-        <PanelField label="Nombre del producto" required>
-          <input
-            type="text"
-            className={panelInput}
-            placeholder="Ej: Coca-Cola 500ml"
-            value={form.nombre ?? ""}
-            onChange={(e) => set("nombre", e.target.value)}
-            autoFocus
-          />
-        </PanelField>
-
-        <div className="grid grid-cols-2 gap-3">
-          <PanelField label="Marca">
-            <input type="text" className={panelInput} placeholder="Ej: Coca-Cola"
-                   value={form.marca ?? ""} onChange={(e) => set("marca", e.target.value)} />
-          </PanelField>
-          <PanelField label="Categoría">
-            <select className={panelInput} value={form.categoria ?? ""}
-                    onChange={(e) => set("categoria", e.target.value)}>
-              {CAT_LIST.map((c) => <option key={c}>{c}</option>)}
-            </select>
-          </PanelField>
-        </div>
-
-        <PanelField label="Código de barras / SKU">
-          <input type="text" className={`${panelInput} font-mono`}
-                 placeholder="7790895001010"
-                 value={form.sku ?? ""} onChange={(e) => set("sku", e.target.value)} />
-        </PanelField>
-
-        <div className="grid grid-cols-2 gap-3">
-          <PanelField label="Precio de venta" required>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted">$</span>
-              <input type="number" min={0} className={`${panelInput} pl-7`}
-                     placeholder="0"
-                     value={form.precio || ""}
-                     onChange={(e) => set("precio", parseInt(e.target.value) || 0)} />
-            </div>
-          </PanelField>
-          <PanelField label="Costo">
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted">$</span>
-              <input type="number" min={0} className={`${panelInput} pl-7`}
-                     placeholder="0"
-                     value={form.costo || ""}
-                     onChange={(e) => set("costo", parseInt(e.target.value) || 0)} />
-            </div>
-          </PanelField>
-        </div>
-
-        {m !== null && (
-          <div className={`-mt-1 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold ${
-            m >= 30 ? "bg-emerald-50 text-emerald-700" :
-            m >= 10 ? "bg-amber-50 text-amber-700" :
-            "bg-red-50 text-red-700"
-          }`}>
-            <IconChart className="h-3.5 w-3.5" />
-            Margen: {m}%
+      {/* ── Scan step ─────────────────────────────────────────── */}
+      {step === "scan" && (
+        <div className="flex flex-1 flex-col items-center justify-center px-8 py-10">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-card-border bg-gray-50 mb-5">
+            <IconBarcode className="h-8 w-8 text-muted" />
           </div>
-        )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <PanelField label="Stock">
-            <input type="number" min={0} className={panelInput}
-                   placeholder="0"
-                   value={form.stock || ""}
-                   onChange={(e) => set("stock", parseInt(e.target.value) || 0)} />
-          </PanelField>
-          <PanelField label="Alerta de stock bajo">
-            <input type="number" min={0} className={panelInput}
-                   placeholder="5"
-                   value={form.stockAlert || ""}
-                   onChange={(e) => set("stockAlert", parseInt(e.target.value) || 0)} />
-          </PanelField>
-        </div>
+          <h3 className="text-[15px] font-bold text-foreground text-center">
+            Escanear código de barras
+          </h3>
+          <p className="mt-1.5 text-sm text-muted text-center max-w-[280px]">
+            Escaneá o ingresá el código EAN-8 o EAN-13 para buscar datos del producto automáticamente.
+          </p>
 
-        <div className="flex items-center justify-between rounded-xl border border-card-border bg-gray-50/50 px-4 py-3">
-          <div>
-            <p className="text-[13px] font-semibold text-foreground">Producto activo</p>
-            <p className="text-xs text-muted">Visible y disponible para la venta</p>
+          <div className="mt-7 w-full max-w-[320px] space-y-3">
+            <div className="relative">
+              <IconBarcode className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted pointer-events-none" />
+              <input
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                placeholder="7790895001010"
+                value={barcode}
+                onChange={(e) => handleBarcodeInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") lookupBarcode(barcode); }}
+                disabled={lookupLoading}
+                className="h-11 w-full rounded-[9px] border border-card-border bg-white pl-10 pr-4 font-mono text-sm font-medium text-foreground placeholder:text-muted outline-none transition-[border-color,box-shadow] focus:border-accent focus:ring-2 focus:ring-accent/10 disabled:opacity-60"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => lookupBarcode(barcode)}
+              disabled={lookupLoading || !barcode.trim()}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-[9px] bg-accent text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {lookupLoading ? (
+                <>
+                  <IconRefresh className="h-4 w-4 animate-spin" />
+                  Buscando…
+                </>
+              ) : (
+                <>
+                  <IconSearch className="h-4 w-4" />
+                  Buscar producto
+                </>
+              )}
+            </button>
+
+            {lookupError && (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3.5 py-2.5 text-xs font-medium text-amber-700">
+                <span className="mt-px flex-shrink-0">⚠</span>
+                <span>{lookupError}</span>
+              </div>
+            )}
           </div>
-          <Toggle checked={form.activo ?? true} onChange={(v) => set("activo", v)} />
-        </div>
-      </div>
 
-      <div className="flex flex-shrink-0 items-center justify-end gap-2.5 border-t border-card-border px-6 py-4">
-        <button type="button" onClick={onClose}
-                className="rounded-lg border border-card-border bg-white px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-gray-50">
-          Cancelar
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving || !form.nombre?.trim()}
-          className="rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-        >
-          {saving ? "Guardando..." : isNew ? "Agregar producto" : "Guardar cambios"}
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={skipToForm}
+            className="mt-8 text-sm font-semibold text-muted underline underline-offset-2 hover:text-foreground transition-colors"
+          >
+            Cargar manualmente →
+          </button>
+        </div>
+      )}
+
+      {/* ── Form step ─────────────────────────────────────────── */}
+      {step === "form" && (
+        <>
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+
+            {/* Pre-filled banner */}
+            {prefilled && (
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                {form.imagen ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={form.imagen} alt="" className="h-10 w-10 rounded-lg object-cover flex-shrink-0 border border-emerald-200" />
+                ) : (
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-100">
+                    <IconCheck className="h-5 w-5 text-emerald-600" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11.5px] font-bold text-emerald-700">Datos encontrados automáticamente</p>
+                  <p className="truncate text-[11px] text-emerald-600">
+                    {form.nombre}{form.marca ? ` · ${form.marca}` : ""}
+                  </p>
+                </div>
+                <IconCheck className="h-4 w-4 flex-shrink-0 text-emerald-500" />
+              </div>
+            )}
+
+            {/* Image URL */}
+            <PanelField label="URL de imagen" hint="limitación conocida: no hay upload aún">
+              <input
+                type="url"
+                className={panelInput}
+                placeholder="https://ejemplo.com/imagen.jpg"
+                value={form.imagen ?? ""}
+                onChange={(e) => set("imagen", e.target.value)}
+              />
+            </PanelField>
+
+            <PanelField label="Nombre del producto" required>
+              <input
+                type="text"
+                className={panelInput}
+                placeholder="Ej: Coca-Cola 500ml"
+                value={form.nombre ?? ""}
+                onChange={(e) => set("nombre", e.target.value)}
+                autoFocus={!prefilled}
+              />
+            </PanelField>
+
+            <div className="grid grid-cols-2 gap-3">
+              <PanelField label="Marca">
+                <input type="text" className={panelInput} placeholder="Ej: Coca-Cola"
+                       value={form.marca ?? ""} onChange={(e) => set("marca", e.target.value)} />
+              </PanelField>
+              <PanelField label="Categoría">
+                <select className={panelInput} value={form.categoria ?? ""}
+                        onChange={(e) => set("categoria", e.target.value)}>
+                  {CAT_LIST.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </PanelField>
+            </div>
+
+            <PanelField label="Código de barras / SKU">
+              <input type="text" className={`${panelInput} font-mono`}
+                     placeholder="7790895001010"
+                     value={form.sku ?? ""} onChange={(e) => set("sku", e.target.value)} />
+            </PanelField>
+
+            <div className="grid grid-cols-2 gap-3">
+              <PanelField label="Precio de venta" required>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted">$</span>
+                  <input type="number" min={0} className={`${panelInput} pl-7`}
+                         placeholder="0"
+                         value={form.precio || ""}
+                         onChange={(e) => set("precio", parseInt(e.target.value) || 0)} />
+                </div>
+              </PanelField>
+              <PanelField label="Costo">
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted">$</span>
+                  <input type="number" min={0} className={`${panelInput} pl-7`}
+                         placeholder="0"
+                         value={form.costo || ""}
+                         onChange={(e) => set("costo", parseInt(e.target.value) || 0)} />
+                </div>
+              </PanelField>
+            </div>
+
+            {m !== null && (
+              <div className={`-mt-1 flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold ${
+                m >= 30 ? "bg-emerald-50 text-emerald-700" :
+                m >= 10 ? "bg-amber-50 text-amber-700" :
+                "bg-red-50 text-red-700"
+              }`}>
+                <IconChart className="h-3.5 w-3.5" />
+                Margen: {m}%
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <PanelField label="Stock">
+                <input type="number" min={0} className={panelInput}
+                       placeholder="0"
+                       value={form.stock || ""}
+                       onChange={(e) => set("stock", parseInt(e.target.value) || 0)} />
+              </PanelField>
+              <PanelField label="Alerta de stock bajo">
+                <input type="number" min={0} className={panelInput}
+                       placeholder="5"
+                       value={form.stockAlert || ""}
+                       onChange={(e) => set("stockAlert", parseInt(e.target.value) || 0)} />
+              </PanelField>
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-card-border bg-gray-50/50 px-4 py-3">
+              <div>
+                <p className="text-[13px] font-semibold text-foreground">Producto activo</p>
+                <p className="text-xs text-muted">Visible y disponible para la venta</p>
+              </div>
+              <Toggle checked={form.activo ?? true} onChange={(v) => set("activo", v)} />
+            </div>
+          </div>
+
+          <div className="flex flex-shrink-0 items-center justify-end gap-2.5 border-t border-card-border px-6 py-4">
+            <button type="button" onClick={onClose}
+                    className="rounded-lg border border-card-border bg-white px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:bg-gray-50">
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !form.nombre?.trim() || !form.precio}
+              className="rounded-lg bg-accent px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {saving ? "Guardando..." : isNew ? "Agregar producto" : "Guardar cambios"}
+            </button>
+          </div>
+        </>
+      )}
     </aside>
   );
 }
@@ -1003,6 +1183,27 @@ function IconRefresh({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M13.5 8A5.5 5.5 0 112.5 5M2.5 2v3h3" />
+    </svg>
+  );
+}
+function IconBarcode({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 5v14M7 5v14M11 5v14M15 5v8M19 5v8M15 17v2M19 17v2M3 3h4M3 21h4M17 3h4M17 21h4" />
+    </svg>
+  );
+}
+function IconChevronLeft({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 14 14" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 2L4 7l5 5" />
+    </svg>
+  );
+}
+function IconCheck({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 14 14" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 7l3.5 3.5 6.5-7" />
     </svg>
   );
 }

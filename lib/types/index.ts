@@ -1,7 +1,8 @@
 // Mirrors the Prisma schema from management-back
 
 export type EstadoCaja = "ABIERTA" | "CERRADA";
-export type MetodoPago = "EFECTIVO" | "DEBITO" | "CREDITO" | "TRANSFERENCIA" | "MERCADO_PAGO";
+export type MetodoPago = "EFECTIVO" | "DEBITO" | "CREDITO" | "TRANSFERENCIA" | "MERCADO_PAGO" | "FIADO";
+export type MetodoPagoNoFiado = Exclude<MetodoPago, "FIADO">;
 export type EstadoVenta = "COMPLETADA" | "ANULADA";
 
 export interface Tenant {
@@ -16,7 +17,8 @@ export interface Tenant {
 export interface Perfil {
   id: string;
   tenantId: string;
-  nombreNegocio: string;
+  tenantNombre: string;
+  tenantNombreDisplay: string;
   nombreDueno: string;
   telefono: string | null;
   direccion: string | null;
@@ -68,8 +70,63 @@ export interface Venta {
   metodoPago: MetodoPago;
   estado: EstadoVenta;
   cajaId: string;
+  clienteId: string | null;
   creadoEn: string;
   items?: ItemVenta[];
+  cliente?: Pick<Cliente, "id" | "nombre">;
+}
+
+export interface Cliente {
+  id: string;
+  tenantId: string;
+  nombre: string;
+  email: string | null;
+  telefono: string | null;
+  direccion: string | null;
+  notas: string | null;
+  activo: boolean;
+  creadoEn: string;
+  actualizadoEn: string;
+}
+
+export interface ClienteConDeuda extends Cliente {
+  deuda: number;
+}
+
+export interface PagoFiado {
+  id: string;
+  tenantId: string;
+  clienteId: string;
+  ventaId: string | null;
+  monto: number;
+  metodoPago: MetodoPagoNoFiado;
+  notas: string | null;
+  creadoEn: string;
+}
+
+export type MovimientoCuenta =
+  | {
+      tipo: "VENTA_FIADO";
+      id: string;
+      fecha: string;
+      monto: number;
+      ventaNumero: number;
+      estado: EstadoVenta;
+    }
+  | {
+      tipo: "PAGO_FIADO";
+      id: string;
+      fecha: string;
+      monto: number;
+      metodoPago: MetodoPagoNoFiado;
+      ventaId: string | null;
+      notas: string | null;
+    };
+
+export interface ClienteCuenta {
+  cliente: Cliente;
+  deuda: number;
+  movimientos: MovimientoCuenta[];
 }
 
 export interface Caja {
@@ -89,6 +146,27 @@ export interface Gasto {
   descripcion: string;
   monto: number;
   creadoEn: string;
+}
+
+export interface GastoConCaja extends Gasto {
+  cajaApertura: string | null;
+}
+
+export interface CajaConAgregados extends Caja {
+  totalFacturado: number;
+  cantVentas:     number;
+  gastosTotal:    number;
+}
+
+export interface CajaResumen {
+  caja: Caja;
+  totales: {
+    totalFacturado: number;
+    cantVentas:     number;
+    ticketPromedio: number;
+  };
+  porMetodo: Array<{ metodoPago: MetodoPago; total: number; cantidad: number; porcentaje: number }>;
+  gastos: { lista: Gasto[]; total: number; cantidad: number };
 }
 
 // ── Reporte types ───────────────────────────────────────────────

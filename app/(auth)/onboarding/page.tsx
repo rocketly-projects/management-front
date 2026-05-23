@@ -48,7 +48,7 @@ interface ScheduleRow { day: string; open: boolean; from: string; to: string; }
 
 interface FormData {
   // Step 1 — Perfil / Tenant
-  nombreNegocio:   string;
+  nombre:          string;
   nombreDueno:     string;
   rubro:           string;
   taxId:           string;
@@ -72,7 +72,7 @@ export default function OnboardingPage() {
   const [step, setStep]   = useState(0);
   const [done, setDone]   = useState(false);
   const [form, setForm]   = useState<FormData>({
-    nombreNegocio:   "",
+    nombre:          "",
     nombreDueno:     "",
     rubro:           "kiosco",
     taxId:           "",
@@ -101,7 +101,7 @@ export default function OnboardingPage() {
     setStepError(null);
 
     if (step === 0) {
-      if (!form.nombreNegocio.trim()) {
+      if (!form.nombre.trim()) {
         setStepError("El nombre del comercio es obligatorio.");
         return;
       }
@@ -134,7 +134,7 @@ export default function OnboardingPage() {
         await register({
           email:         form.email,
           password:      form.password,
-          nombreNegocio: form.nombreNegocio,
+          nombre:        form.nombre,
           nombreDueno:   form.nombreDueno || undefined,
           telefono:      form.telefono || undefined,
           taxId:         form.taxId || undefined,
@@ -153,7 +153,7 @@ export default function OnboardingPage() {
     setStep((s) => s - 1);
   }
 
-  if (done) return <SuccessScreen name={form.nombreNegocio} />;
+  if (done) return <SuccessScreen name={form.nombre} />;
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -353,13 +353,13 @@ function Step1({
         Tomará menos de un minuto. Estos datos aparecerán en tus tickets y reportes.
       </p>
 
-      <FormGroup label="Nombre del comercio" required htmlFor="nombreNegocio">
+      <FormGroup label="Nombre del comercio" required htmlFor="nombre">
         <input
-          id="nombreNegocio"
+          id="nombre"
           className={inputCls}
           placeholder="Ej: Kiosco El Puente"
-          value={form.nombreNegocio}
-          onChange={(e) => setField("nombreNegocio", e.target.value)}
+          value={form.nombre}
+          onChange={(e) => setField("nombre", e.target.value)}
           autoFocus
         />
       </FormGroup>
@@ -737,12 +737,12 @@ function Step4({
         Todo listo, {form.nombreDueno || "bienvenido"}
       </h1>
       <p className={sub}>
-        Revisá los datos antes de crear tu comercio. Podés editar cualquier sección haciendo clic en "Editar".
+        Revisá los datos antes de crear tu comercio. Podés editar cualquier sección haciendo clic en &ldquo;Editar&rdquo;.
       </p>
 
       {/* Comercio */}
       <ConfirmCard title="Comercio" onEdit={() => onEdit(0)}>
-        <ConfirmRow label="Nombre" value={form.nombreNegocio || <Empty />} />
+        <ConfirmRow label="Nombre" value={form.nombre || <Empty />} />
         <ConfirmRow label="Rubro" value={rubro ? `${rubro.emoji} ${rubro.label}` : "—"} />
         {form.nombreDueno && <ConfirmRow label="Responsable" value={form.nombreDueno} />}
         {form.telefono    && <ConfirmRow label="Teléfono"    value={form.telefono}    />}

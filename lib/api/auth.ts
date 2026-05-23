@@ -4,7 +4,7 @@ import type { AuthResponse } from "../types";
 export interface RegisterPayload {
   email: string;
   password: string;
-  nombreNegocio: string;
+  nombre: string;
   nombreDueno?: string;
   telefono?: string;
   direccion?: string;
