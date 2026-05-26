@@ -10,7 +10,12 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(del \"C:\\\\workspacePersonal\\\\management-front\\\\middleware.ts\" 2>/dev/null; ls \"C:\\\\workspacePersonal\\\\management-front\\\\middleware.ts\" 2>&1)"
+      "Bash(del \"C:\\\\workspacePersonal\\\\management-front\\\\middleware.ts\" 2>/dev/null; ls \"C:\\\\workspacePersonal\\\\management-front\\\\middleware.ts\" 2>&1)",
+      "Bash(npx tsc *)",
+      "PowerShell(app *)",
+      "PowerShell(npx eslint \"app/\\(app\\)/caja/page.tsx\" \"app/components/ProductCreationModal.tsx\" \"lib/hooks/useProductSearch.ts\" \"lib/utils/openFoodFactsAdapter.ts\" \"lib/utils/productSearchCache.ts\" \"lib/api/productos.ts\" 2>&1 | Select-Object -First 80)",
+      "PowerShell(npx eslint \"app/components/ProductCreationModal.tsx\" \"lib/hooks/useProductSearch.ts\" \"lib/utils/openFoodFactsAdapter.ts\" \"lib/utils/productSearchCache.ts\" \"lib/api/productos.ts\" 2>&1 | Select-Object -First 40)",
+      "PowerShell(npx eslint \"app/\\(app\\)/caja/page.tsx\" \"app/components/ProductCreationModal.tsx\" \"lib/hooks/useProductSearch.ts\" \"lib/utils/openFoodFactsAdapter.ts\" \"lib/utils/productSearchCache.ts\" \"lib/api/productos.ts\" \"lib/api/client.ts\" \"lib/types/index.ts\" 2>&1 | Select-Object -First 30)"
     ]
   }
 }

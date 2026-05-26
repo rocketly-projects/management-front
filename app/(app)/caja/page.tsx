@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense, memo } from "react";
 import { useProductosStore } from "@/lib/store/productosStore";
 import { useCajaStore } from "@/lib/store/cajaStore";
 import { useAuthStore } from "@/lib/store/authStore";
@@ -13,7 +13,24 @@ import { getClientes, createCliente } from "@/lib/api/clientes";
 import { ApiError } from "@/lib/api/client";
 import { useDebouncedValue } from "@/lib/hooks/useDebouncedValue";
 import { useCierreCajaReporte } from "@/lib/hooks/useCierreCajaReporte";
-import type { MetodoPago, Gasto, Cliente, ClienteConDeuda } from "@/lib/types";
+import { useProductSearch } from "@/lib/hooks/useProductSearch";
+import { mapOpenFoodFactsToDraft } from "@/lib/utils/openFoodFactsAdapter";
+import type {
+  MetodoPago,
+  Gasto,
+  Cliente,
+  ClienteConDeuda,
+  Producto,
+  ProductDraft,
+  ProductSearchResult,
+  LocalProductSearchResult,
+  OFFProductSearchResult,
+} from "@/lib/types";
+
+// Lazy: el modal no es necesario en el render inicial de la caja.
+const ProductCreationModal = lazy(
+  () => import("@/app/components/ProductCreationModal")
+);
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -65,15 +82,6 @@ const METHOD_FROM_API: Record<MetodoPago, PayMethod> = {
   FIADO:         "fiado",
 };
 
-const CAT_COLORS: Record<string, { bg: string; color: string }> = {
-  Bebidas:   { bg:"rgba(219,234,254,.7)", color:"#1d4ed8" },
-  Golosinas: { bg:"rgba(252,231,243,.7)", color:"#9d174d" },
-  Tabaco:    { bg:"rgba(254,243,199,.7)", color:"#92400e" },
-  Almacén:   { bg:"rgba(220,252,231,.7)", color:"#166534" },
-  Panadería: { bg:"rgba(255,237,213,.7)", color:"#9a3412" },
-  Lácteos:   { bg:"rgba(254,226,226,.7)", color:"#991b1b" },
-};
-
 const CASH_PRESETS = [500, 1000, 2000, 5000, 10000];
 
 /* ── Helpers ───────────────────────────────────────────────────── */
@@ -85,16 +93,8 @@ const fmtARS = (n: number) => `$${Math.round(n).toLocaleString("es-AR")}`;
 export default function CajaPage() {
   const clock       = useClock();
   const { cajaActiva, loading: cajaLoading, abrir } = useCajaStore();
-  const { productos, fetch: fetchProductos }         = useProductosStore();
+  const { fetch: fetchProductos }                   = useProductosStore();
   const { perfil }                                   = useAuthStore();
-
-  // Derive searchable catalog from store
-  const catalog: CatalogItem[] = useMemo(
-    () => productos
-      .filter((p) => p.activo)
-      .map((p) => ({ id: p.id, name: p.nombre, cat: p.categoria, code: p.sku, price: p.precio, stock: p.stock })),
-    [productos]
-  );
 
   const [cart,        setCart]        = useState<CartItem[]>([]);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
@@ -122,11 +122,19 @@ export default function CajaPage() {
   const [gastoLoading, setGastoLoading] = useState(false);
   const [gastoError,   setGastoError]   = useState<string | null>(null);
 
-  // Search state
+  // Search state — backend-driven (locales + sugerencias OFF)
   const [query,      setQuery]      = useState("");
   const [dropOpen,   setDropOpen]   = useState(false);
   const [focusedIdx, setFocusedIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  const { results: searchResults, loading: searchLoading, error: searchError } =
+    useProductSearch(query, 10);
+
+  // Modal de creación (lazy). Se reusa para cualquier fuente externa.
+  const [createOpen,  setCreateOpen]  = useState(false);
+  const [createDraft, setCreateDraft] = useState<ProductDraft | null>(null);
+  const [createLabel, setCreateLabel] = useState<string | undefined>(undefined);
+  const [toast,       setToast]       = useState<string | null>(null);
 
   // Cliente state
   const [selectedCliente, setSelectedCliente] = useState<ClienteConDeuda | null>(null);
@@ -163,13 +171,20 @@ export default function CajaPage() {
 
   const effectiveMethod: PayMethod = !selectedCliente && method === "fiado" ? "efectivo" : method;
 
-  const results = useMemo(() => {
-    const q = query.toLowerCase();
-    if (!q) return [];
-    return catalog.filter(
-      (p) => p.name.toLowerCase().includes(q) || (p.code ?? "").includes(q)
-    ).slice(0, 8);
-  }, [query, catalog]);
+  // Resultados separados por fuente — agrupados visualmente
+  const localResults = useMemo(
+    () => searchResults.filter((r): r is LocalProductSearchResult => r.source === "local"),
+    [searchResults]
+  );
+  const externalResults = useMemo(
+    () => searchResults.filter((r): r is OFFProductSearchResult => r.source === "openfoodfacts"),
+    [searchResults]
+  );
+  // Lista ordenada plana (locales primero) para navegación con teclado
+  const flatResults: ProductSearchResult[] = useMemo(
+    () => [...localResults, ...externalResults],
+    [localResults, externalResults]
+  );
 
   const subtotal = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const discVal  = parseFloat(discount) || 0;
@@ -186,8 +201,9 @@ export default function CajaPage() {
     setCart((prev) => {
       const existing = prev.find((c) => c.id === item.id);
       if (existing) {
+        const cap = item.stock > 0 ? item.stock : existing.qty + 1;
         return prev.map((c) =>
-          c.id === item.id ? { ...c, qty: Math.min(c.qty + 1, item.stock) } : c
+          c.id === item.id ? { ...c, qty: Math.min(c.qty + 1, cap) } : c
         );
       }
       const newItem = { ...item, qty: 1, cartId: Date.now() };
@@ -197,6 +213,50 @@ export default function CajaPage() {
     setQuery("");
     setDropOpen(false);
     searchRef.current?.focus();
+  }
+
+  /** Mapea un Producto del backend a CatalogItem. Si el producto no tiene stock
+   *  (típico al importar desde OFF con initialStock=0), damos un techo holgado
+   *  para no bloquear al cajero — la fuente de verdad sigue siendo el backend. */
+  function productoToCatalogItem(p: Producto): CatalogItem {
+    return {
+      id: p.id,
+      name: p.nombre,
+      cat: p.categoria,
+      code: p.sku,
+      price: p.precio,
+      stock: p.stock > 0 ? p.stock : 9999,
+    };
+  }
+
+  function handlePickLocal(r: LocalProductSearchResult) {
+    addToCart({
+      id: r.id,
+      name: r.name,
+      cat: null,
+      code: r.barcode,
+      price: r.price,
+      stock: r.stock,
+    });
+  }
+
+  function handlePickExternal(r: OFFProductSearchResult) {
+    setCreateDraft(mapOpenFoodFactsToDraft(r));
+    setCreateLabel("Importar desde Open Food Facts");
+    setCreateOpen(true);
+    setDropOpen(false);
+  }
+
+  function handleProductCreated(p: Producto, opts: { wasExisting: boolean }) {
+    addToCart(productoToCatalogItem(p));
+    // Refrescar store para que la pantalla de Productos quede consistente
+    fetchProductos();
+    if (opts.wasExisting) {
+      setToast("Este producto ya existía en tu catálogo — se agregó al carrito.");
+      setTimeout(() => setToast(null), 4000);
+    }
+    setQuery("");
+    setTimeout(() => searchRef.current?.focus(), 50);
   }
 
   function updateQty(cartId: number, delta: number) {
@@ -350,6 +410,10 @@ export default function CajaPage() {
         if (e.key === "Escape") { setQuickCreateOpen(false); }
         return;
       }
+      if (createOpen) {
+        // El modal maneja su propio teclado; sólo evitar shortcuts globales.
+        return;
+      }
       const fMap: Record<string, PayMethod> = { F1:"efectivo", F2:"debito", F3:"credito", F4:"transf", F5:"mp" };
       if (fMap[e.key]) { e.preventDefault(); setMethod(fMap[e.key]); return; }
       if (e.key === "F6") { e.preventDefault(); if (selectedCliente) setMethod("fiado"); return; }
@@ -368,15 +432,20 @@ export default function CajaPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting, selectedCliente, quickCreateOpen]);
+  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting, selectedCliente, quickCreateOpen, createOpen]);
 
   /* ── Search handlers ─────────────────────────────────────── */
 
+  function pickResult(r: ProductSearchResult) {
+    if (r.source === "local") handlePickLocal(r);
+    else handlePickExternal(r);
+  }
+
   function onSearchKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!dropOpen || results.length === 0) return;
-    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIdx((i) => Math.min(i + 1, results.length - 1)); }
+    if (!dropOpen || flatResults.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIdx((i) => Math.min(i + 1, flatResults.length - 1)); }
     if (e.key === "ArrowUp")   { e.preventDefault(); setFocusedIdx((i) => Math.max(i - 1, 0)); }
-    if (e.key === "Enter")     { e.preventDefault(); addToCart(results[focusedIdx]); }
+    if (e.key === "Enter")     { e.preventDefault(); pickResult(flatResults[focusedIdx]); }
     if (e.key === "Escape")    { setDropOpen(false); setQuery(""); }
   }
 
@@ -450,7 +519,14 @@ export default function CajaPage() {
 
       {/* ── Search bar ──────────────────────────────────────── */}
       <div className="relative flex-shrink-0 border-b border-card-border bg-white px-4 py-2.5">
-        <div className="relative">
+        <div
+          className="relative"
+          role="combobox"
+          aria-expanded={dropOpen}
+          aria-controls="caja-search-listbox"
+          aria-haspopup="listbox"
+          aria-owns="caja-search-listbox"
+        >
           <IconSearch className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <input
             ref={searchRef}
@@ -461,13 +537,22 @@ export default function CajaPage() {
             onBlur={() => setTimeout(() => setDropOpen(false), 150)}
             onKeyDown={onSearchKey}
             placeholder="Buscar por nombre o código de barras…"
+            aria-label="Buscar productos"
+            aria-autocomplete="list"
+            aria-activedescendant={
+              dropOpen && flatResults.length > 0
+                ? `caja-search-opt-${focusedIdx}`
+                : undefined
+            }
             className="h-[46px] w-full rounded-xl border-2 border-card-border bg-gray-50/60 pl-10 pr-32 text-[14px] text-foreground placeholder:text-muted outline-none transition-all focus:border-accent focus:bg-white focus:shadow-[0_0_0_3px_rgba(79,110,247,.12)]"
             autoFocus
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2 text-[11.5px] text-muted">
+            {searchLoading && <span className="text-muted/70">Buscando…</span>}
             {query ? (
               <button type="button" onClick={() => { setQuery(""); setDropOpen(false); searchRef.current?.focus(); }}
-                      className="text-muted hover:text-foreground transition-colors">
+                      className="text-muted hover:text-foreground transition-colors"
+                      aria-label="Limpiar búsqueda">
                 <IconX className="h-3.5 w-3.5" />
               </button>
             ) : (
@@ -476,35 +561,38 @@ export default function CajaPage() {
           </div>
         </div>
 
-        {dropOpen && results.length > 0 && (
-          <div className="absolute left-4 right-4 top-full z-20 mt-1 overflow-hidden rounded-xl border border-card-border bg-white shadow-xl">
-            {results.map((p, i) => (
-              <div key={p.id}
-                   className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors ${i === focusedIdx ? "bg-accent/8" : "hover:bg-gray-50"}`}
-                   onMouseEnter={() => setFocusedIdx(i)}
-                   onMouseDown={() => addToCart(p)}>
-                {p.cat && (
-                  <span className="rounded-md px-2 py-0.5 text-[10.5px] font-semibold"
-                        style={{ background: CAT_COLORS[p.cat]?.bg ?? "#f1f5f9", color: CAT_COLORS[p.cat]?.color ?? "#475569" }}>
-                    {p.cat}
-                  </span>
-                )}
-                <span className="flex-1 text-[13.5px] font-semibold text-foreground">{p.name}</span>
-                {p.code && <span className="font-mono text-[11px] text-muted">{p.code}</span>}
-                <span className={`text-[11px] font-semibold ${p.stock <= 2 ? "text-red-500" : "text-emerald-600"}`}>
-                  {p.stock} uds.
-                </span>
-                <span className="min-w-[64px] text-right font-mono text-[13px] font-bold text-foreground">{fmtARS(p.price)}</span>
-              </div>
-            ))}
-            <div className="flex items-center gap-4 border-t border-card-border bg-gray-50/60 px-4 py-1.5 text-[11px] text-muted">
-              <span>↑↓ navegar</span><span>↵ agregar</span><span>Esc cerrar</span>
-            </div>
+        {dropOpen && flatResults.length > 0 && (
+          <SearchDropdown
+            id="caja-search-listbox"
+            locals={localResults}
+            externals={externalResults}
+            focusedIdx={focusedIdx}
+            onFocus={setFocusedIdx}
+            onPick={pickResult}
+          />
+        )}
+        {dropOpen && query.trim().length >= 2 && !searchLoading && flatResults.length === 0 && !searchError && (
+          <div className="absolute left-4 right-4 top-full z-20 mt-1 rounded-xl border border-card-border bg-white px-4 py-4 text-center text-[13px] text-muted shadow-xl">
+            <p className="font-semibold text-foreground/70">Sin resultados para &ldquo;{query}&rdquo;</p>
+            <p className="mt-1 text-[12px] text-muted/80">
+              Probá buscar por código de barras o creá el producto manualmente desde la sección Productos.
+            </p>
           </div>
         )}
-        {dropOpen && query && results.length === 0 && (
-          <div className="absolute left-4 right-4 top-full z-20 mt-1 rounded-xl border border-card-border bg-white px-4 py-4 text-center text-sm text-muted shadow-xl">
-            Sin resultados para &ldquo;{query}&rdquo;
+        {dropOpen && searchError && (
+          <div className="absolute left-4 right-4 top-full z-20 mt-1 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center text-[12.5px] font-semibold text-red-600 shadow-xl">
+            {searchError}
+          </div>
+        )}
+
+        {/* Toast contextual (ej. 409 / producto ya existente) */}
+        {toast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute left-1/2 top-full z-30 mt-2 -translate-x-1/2 rounded-lg bg-emerald-600 px-4 py-2 text-[12.5px] font-semibold text-white shadow-lg"
+          >
+            {toast}
           </div>
         )}
       </div>
@@ -846,6 +934,22 @@ export default function CajaPage() {
 
       {/* ── Success modal ────────────────────────────────────── */}
       {modal && <SuccessModal sale={modal} onNuevaVenta={handleNuevaVenta} />}
+
+      {/* ── Product creation modal (reutilizable, lazy) ──────── */}
+      {createOpen && createDraft && (
+        <Suspense fallback={null}>
+          <ProductCreationModal
+            isOpen={createOpen}
+            initialData={createDraft}
+            sourceLabel={createLabel}
+            onClose={() => {
+              setCreateOpen(false);
+              setTimeout(() => searchRef.current?.focus(), 50);
+            }}
+            onSuccess={handleProductCreated}
+          />
+        </Suspense>
+      )}
 
       {/* ── Quick-create cliente modal ───────────────────────── */}
       {quickCreateOpen && (
@@ -1762,6 +1866,163 @@ function StatusItem({ label, value, valueClass = "text-white/70" }: {
     </span>
   );
 }
+
+/* ── Search dropdown (separado del input para no re-renderizar por keystroke) ── */
+
+const SearchDropdown = memo(function SearchDropdown({
+  id,
+  locals,
+  externals,
+  focusedIdx,
+  onFocus,
+  onPick,
+}: {
+  id: string;
+  locals: LocalProductSearchResult[];
+  externals: OFFProductSearchResult[];
+  focusedIdx: number;
+  onFocus: (i: number) => void;
+  onPick: (r: ProductSearchResult) => void;
+}) {
+  return (
+    <div
+      id={id}
+      role="listbox"
+      className="absolute left-4 right-4 top-full z-20 max-h-[420px] overflow-y-auto rounded-xl border border-card-border bg-white shadow-xl"
+    >
+      {locals.length > 0 && (
+        <>
+          <div className="border-b border-card-border bg-gray-50/80 px-4 py-1 text-[10.5px] font-bold uppercase tracking-[.08em] text-muted">
+            En tu catálogo
+          </div>
+          {locals.map((r, i) => (
+            <LocalRow
+              key={r.id}
+              id={`caja-search-opt-${i}`}
+              data={r}
+              focused={i === focusedIdx}
+              onFocus={() => onFocus(i)}
+              onPick={() => onPick(r)}
+            />
+          ))}
+        </>
+      )}
+
+      {externals.length > 0 && (
+        <>
+          <div className="flex items-center justify-between border-y border-card-border bg-amber-50/80 px-4 py-1 text-[10.5px] font-bold uppercase tracking-[.08em] text-amber-700">
+            <span>Sugerencias · Open Food Facts</span>
+            <span className="font-normal normal-case text-amber-700/70 tracking-normal">
+              Necesitan precio antes de cobrar
+            </span>
+          </div>
+          {externals.map((r, i) => {
+            const idx = locals.length + i;
+            return (
+              <ExternalRow
+                key={r.externalId}
+                id={`caja-search-opt-${idx}`}
+                data={r}
+                focused={idx === focusedIdx}
+                onFocus={() => onFocus(idx)}
+                onPick={() => onPick(r)}
+              />
+            );
+          })}
+        </>
+      )}
+
+      <div className="flex items-center gap-4 border-t border-card-border bg-gray-50/60 px-4 py-1.5 text-[11px] text-muted">
+        <span>↑↓ navegar</span>
+        <span>↵ seleccionar</span>
+        <span>Esc cerrar</span>
+      </div>
+    </div>
+  );
+});
+
+const LocalRow = memo(function LocalRow({
+  id, data, focused, onFocus, onPick,
+}: {
+  id: string;
+  data: LocalProductSearchResult;
+  focused: boolean;
+  onFocus: () => void;
+  onPick: () => void;
+}) {
+  const lowStock = data.stock <= 0;
+  return (
+    <div
+      id={id}
+      role="option"
+      aria-selected={focused}
+      aria-disabled={lowStock}
+      className={[
+        "flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors",
+        focused ? "bg-accent/8" : "hover:bg-gray-50",
+        lowStock ? "opacity-60" : "",
+      ].join(" ")}
+      onMouseEnter={onFocus}
+      onMouseDown={(e) => { e.preventDefault(); if (!lowStock) onPick(); }}
+    >
+      <span className="flex-1 min-w-0">
+        <span className="block truncate text-[13.5px] font-semibold text-foreground">{data.name}</span>
+        {data.brand && <span className="block truncate text-[11px] text-muted">{data.brand}</span>}
+      </span>
+      {data.barcode && <span className="font-mono text-[11px] text-muted">{data.barcode}</span>}
+      <span className={`text-[11px] font-semibold ${lowStock ? "text-red-500" : data.stock <= 2 ? "text-amber-600" : "text-emerald-600"}`}>
+        {lowStock ? "Sin stock" : `${data.stock} uds.`}
+      </span>
+      <span className="min-w-[64px] text-right font-mono text-[13px] font-bold text-foreground">
+        {fmtARS(data.price)}
+      </span>
+    </div>
+  );
+});
+
+const ExternalRow = memo(function ExternalRow({
+  id, data, focused, onFocus, onPick,
+}: {
+  id: string;
+  data: OFFProductSearchResult;
+  focused: boolean;
+  onFocus: () => void;
+  onPick: () => void;
+}) {
+  return (
+    <div
+      id={id}
+      role="option"
+      aria-selected={focused}
+      className={[
+        "flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors",
+        focused ? "bg-amber-100/60" : "hover:bg-amber-50/60",
+      ].join(" ")}
+      onMouseEnter={onFocus}
+      onMouseDown={(e) => { e.preventDefault(); onPick(); }}
+    >
+      {data.imageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={data.imageUrl}
+          alt=""
+          loading="lazy"
+          className="h-8 w-8 flex-shrink-0 rounded-md border border-card-border bg-white object-cover"
+        />
+      ) : (
+        <div className="h-8 w-8 flex-shrink-0 rounded-md border border-dashed border-amber-300 bg-amber-50" />
+      )}
+      <span className="flex-1 min-w-0">
+        <span className="block truncate text-[13.5px] font-semibold text-foreground">{data.name}</span>
+        {data.brand && <span className="block truncate text-[11px] text-muted">{data.brand}</span>}
+      </span>
+      {data.barcode && <span className="font-mono text-[11px] text-muted">{data.barcode}</span>}
+      <span className="rounded-md border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+        Importar
+      </span>
+    </div>
+  );
+});
 
 /* ── Clock hook ────────────────────────────────────────────────── */
 

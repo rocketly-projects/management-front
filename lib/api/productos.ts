@@ -1,5 +1,9 @@
 import { apiFetch } from "./client";
-import type { Producto } from "../types";
+import type {
+  Producto,
+  ProductSearchResponse,
+  CreateFromExternalPayload,
+} from "../types";
 
 export interface ProductoFilters {
   categoria?: string;
@@ -36,4 +40,27 @@ export function updateProducto(id: string, data: Partial<Producto>) {
 
 export function deleteProducto(id: string) {
   return apiFetch<void>(`/productos/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Búsqueda unificada usada por la caja: locales del tenant + sugerencias de OFF.
+ * El backend devuelve los results con `source: "local" | "openfoodfacts"`.
+ */
+export function searchProductos(q: string, limit = 10, signal?: AbortSignal) {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return apiFetch<ProductSearchResponse>(
+    `/productos/search?${params.toString()}`,
+    { signal }
+  );
+}
+
+/**
+ * Crea un Producto local a partir de un payload de fuente externa (OFF, scanner, etc.).
+ * 201 → Producto creado. 409 → ya existe; el cuerpo del ApiError trae `productoId`.
+ */
+export function createProductoFromExternal(payload: CreateFromExternalPayload) {
+  return apiFetch<Producto>("/productos/from-external", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }

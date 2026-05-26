@@ -219,3 +219,60 @@ export interface AuthResponse {
   token: string;
   perfil: Perfil;
 }
+
+// ── Búsqueda de productos en caja (POS) ─────────────────────────
+
+export interface LocalProductSearchResult {
+  source: "local";
+  id: string;
+  name: string;
+  brand: string | null;
+  barcode: string | null;
+  price: number;
+  stock: number;
+  imageUrl: string | null;
+}
+
+export interface OFFProductSearchResult {
+  source: "openfoodfacts";
+  externalId: string;
+  name: string;
+  brand: string | null;
+  barcode: string;
+  imageUrl: string | null;
+  categories: string[];
+  nutritionalInfo?: Record<string, unknown>;
+}
+
+export type ProductSearchResult = LocalProductSearchResult | OFFProductSearchResult;
+
+export interface ProductSearchResponse {
+  results: ProductSearchResult[];
+  localCount: number;
+  suggestionCount: number;
+}
+
+/**
+ * Payload pre-cargado para <ProductCreationModal />.
+ * Agnóstico de la fuente: cualquier mapper (OFF, scanner, importación CSV, etc.)
+ * solo necesita producir este shape — el modal no conoce ni le importa el origen.
+ */
+export interface ProductDraft {
+  barcode?: string;
+  name?: string;
+  brand?: string;
+  imageUrl?: string;
+  categories?: string[];
+  externalSource?: string;
+}
+
+export interface CreateFromExternalPayload {
+  barcode: string;
+  name: string;
+  brand?: string;
+  imageUrl?: string;
+  categories?: string[];
+  price: number;
+  initialStock?: number;
+  externalSource?: string;
+}
