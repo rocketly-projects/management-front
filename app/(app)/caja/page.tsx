@@ -132,6 +132,7 @@ export default function CajaPage() {
   // Barcode scanner buffer
   const barcodeBuffer    = useRef<string>("");
   const barcodeLastKeyAt = useRef<number>(0);
+  const barcodeTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cliente state
   const [selectedCliente, setSelectedCliente] = useState<ClienteConDeuda | null>(null);
@@ -363,14 +364,57 @@ export default function CajaPage() {
   useEffect(() => { modalRef.current     = modal;      }, [modal]);
 
   useEffect(() => {
-    const BURST_MS  = 100; // intervalo máximo entre teclas para considerarlas parte del escaneo
-    const MIN_CHARS = 4;   // mínimo de caracteres para descartar pulsaciones accidentales
+    // Las pistolas USB HID envían los caracteres con <50 ms entre teclas.
+    // Acumulamos en buffer y procesamos automáticamente 80 ms después del
+    // último carácter rápido — sin necesidad de que el scanner envíe Enter.
+    // Si el scanner sí envía Enter, procesamos inmediatamente al recibirlo.
+    const BURST_MS = 50;  // gap máximo entre chars para considerarlos del scanner
+    const WAIT_MS  = 80;  // ms a esperar tras el último char antes de auto-procesar
+
+    function processScan(code: string) {
+      const clean = code.trim();
+      if (!clean) return;
+
+      setQuery("");
+      setDropOpen(false);
+
+      const cat   = catalogRef.current;
+      const exact = cat.find((p) => (p.code ?? "").toLowerCase() === clean.toLowerCase());
+
+      if (exact) {
+        addToCartRef.current(exact);
+      } else {
+        void (async () => {
+          try {
+            const res = await fetch(
+              `https://world.openfoodfacts.org/api/v2/product/${clean}.json?fields=product_name,brands,image_front_url`
+            );
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === 1) {
+                const p = data.product;
+                setNuevoProductoScan({
+                  sku:    clean,
+                  nombre: p.product_name ?? "",
+                  marca:  p.brands        ?? "",
+                  imagen: p.image_front_url ?? "",
+                });
+                setNuevoProductoOpen(true);
+                return;
+              }
+            }
+          } catch { /* ignorar errores de red */ }
+          setQuery(clean);
+          setDropOpen(true);
+          setFocusedIdx(0);
+          searchRef.current?.focus();
+        })();
+      }
+    }
 
     function onBarcode(e: KeyboardEvent) {
-      // No interceptar si hay un modal abierto
       if (modalRef.current || nuevoProductoOpenRef.current) return;
 
-      // Solo caracteres imprimibles (largo 1) + Enter
       const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
       const isEnter     = e.key === "Enter";
       if (!isPrintable && !isEnter) return;
@@ -379,76 +423,44 @@ export default function CajaPage() {
       const gap = now - barcodeLastKeyAt.current;
       barcodeLastKeyAt.current = now;
 
-      if (isPrintable) {
-        if (gap > 200) barcodeBuffer.current = "";
-        barcodeBuffer.current += e.key;
-        console.log("[scanner] char:", e.key, "| buffer:", barcodeBuffer.current, "| gap:", gap, "ms");
+      if (isEnter) {
+        // Si hay un timer pendiente, cancelarlo y procesar ya
+        if (barcodeTimer.current) {
+          clearTimeout(barcodeTimer.current);
+          barcodeTimer.current = null;
+        }
+        const code       = barcodeBuffer.current.trim();
+        const digitCount = code.replace(/\D/g, "").length;
+        barcodeBuffer.current = "";
+        if (digitCount >= 8) {
+          e.preventDefault();
+          processScan(code);
+        }
         return;
       }
 
-      const digitCount = barcodeBuffer.current.replace(/\D/g, "").length;
-      const isBarcode  = gap <= BURST_MS || digitCount >= 8;
-      console.log("[scanner] ENTER | gap:", gap, "ms | buffer:", barcodeBuffer.current, "| digitCount:", digitCount, "| isBarcode:", isBarcode);
+      // Carácter imprimible
+      if (gap > 200) barcodeBuffer.current = ""; // reset en pausa larga (tipeo humano)
+      barcodeBuffer.current += e.key;
 
-      if (isEnter && isBarcode && barcodeBuffer.current.length >= MIN_CHARS) {
-        const code = barcodeBuffer.current.trim();
-        barcodeBuffer.current = "";
-
-        e.preventDefault();
-
-        console.log("[scanner] ✅ código detectado:", code);
-
-        setQuery("");
-        setDropOpen(false);
-
-        const cat = catalogRef.current;
-        console.log("[scanner] catálogo tiene", cat.length, "productos");
-        const exact = cat.find(
-          (p) => (p.code ?? "").toLowerCase() === code.toLowerCase()
-        );
-        console.log("[scanner] match exacto:", exact ?? "ninguno");
-
-        if (exact) {
-          // Coincidencia exacta → agregar al carrito directamente
-          addToCartRef.current(exact);
-        } else {
-          // Sin coincidencia en catálogo → buscar en Open Food Facts
-          void (async () => {
-            try {
-              const res = await fetch(
-                `https://world.openfoodfacts.org/api/v2/product/${code}.json?fields=product_name,brands,image_front_url`
-              );
-              if (res.ok) {
-                const data = await res.json();
-                if (data.status === 1) {
-                  const p = data.product;
-                  setNuevoProductoScan({
-                    sku: code,
-                    nombre: p.product_name ?? "",
-                    marca:  p.brands ?? "",
-                    imagen: p.image_front_url ?? "",
-                  });
-                  setNuevoProductoOpen(true);
-                  return;
-                }
-              }
-            } catch { /* ignorar errores de red */ }
-            // No encontrado en OFF ni en catálogo → mostrar en buscador
-            setQuery(code);
-            setDropOpen(true);
-            setFocusedIdx(0);
-            searchRef.current?.focus();
-          })();
-        }
-      } else {
-        // Enter que no es de scanner → limpiar buffer
-        barcodeBuffer.current = "";
+      // Solo armar el timer cuando el carácter llegó rápido (scanner burst)
+      if (gap < BURST_MS) {
+        if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+        barcodeTimer.current = setTimeout(() => {
+          barcodeTimer.current = null;
+          const code       = barcodeBuffer.current.trim();
+          barcodeBuffer.current = "";
+          const digitCount = code.replace(/\D/g, "").length;
+          if (digitCount >= 4) processScan(code);
+        }, WAIT_MS);
       }
     }
 
     window.addEventListener("keydown", onBarcode, { capture: true });
-    return () => window.removeEventListener("keydown", onBarcode, { capture: true });
-  // Solo se monta/desmonta una vez — los refs se mantienen actualizados
+    return () => {
+      window.removeEventListener("keydown", onBarcode, { capture: true });
+      if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
