@@ -746,14 +746,14 @@ function ProductPanel({
     try {
       const result = await fetchOpenFoodFacts(clean);
       if (!result) {
-        setLookupError("Producto no encontrado. Podés completar los datos manualmente.");
+        setLookupError("No encontramos este producto. Podés cargarlo manualmente.");
         return;
       }
       setForm((f) => ({ ...f, sku: clean, ...result }));
       setPrefilled(true);
       setStep("form");
     } catch {
-      setLookupError("No se pudo conectar. Verificá tu conexión e intentá de nuevo.");
+      setLookupError("No encontramos este producto. Podés cargarlo manualmente.");
     } finally {
       setLookupLoading(false);
     }
