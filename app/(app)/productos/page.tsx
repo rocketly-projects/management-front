@@ -759,12 +759,24 @@ function ProductPanel({
     }
   }
 
+  const lookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   function handleBarcodeInput(val: string) {
     setBarcode(val);
     setLookupError(null);
     const digits = val.replace(/\D/g, "");
+
+    if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
+
     if (digits.length === 13) {
+      // EAN-13 completo → buscar ya
       lookupBarcode(digits);
+    } else if (digits.length === 8) {
+      // EAN-8: esperar 150ms por si siguen llegando dígitos (scanner EAN-13)
+      lookupTimerRef.current = setTimeout(() => {
+        lookupTimerRef.current = null;
+        lookupBarcode(digits);
+      }, 150);
     }
   }
 
