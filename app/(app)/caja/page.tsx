@@ -404,10 +404,8 @@ export default function CajaPage() {
               }
             }
           } catch { /* ignorar errores de red */ }
-          setQuery(clean);
-          setDropOpen(true);
-          setFocusedIdx(0);
-          searchRef.current?.focus();
+          setNuevoProductoScan({ sku: clean, nombre: "", marca: "", imagen: "" });
+          setNuevoProductoOpen(true);
         })();
       }
     }
