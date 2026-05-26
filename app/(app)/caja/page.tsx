@@ -363,7 +363,7 @@ export default function CajaPage() {
   useEffect(() => { modalRef.current     = modal;      }, [modal]);
 
   useEffect(() => {
-    const BURST_MS  = 50;  // intervalo máximo entre teclas para considerarlas parte del escaneo
+    const BURST_MS  = 100; // intervalo máximo entre teclas para considerarlas parte del escaneo
     const MIN_CHARS = 4;   // mínimo de caracteres para descartar pulsaciones accidentales
 
     function onBarcode(e: KeyboardEvent) {
@@ -381,13 +381,18 @@ export default function CajaPage() {
 
       if (isPrintable) {
         // Si el gap es demasiado grande, resetear el buffer (tipeo humano pausado)
-        if (gap > BURST_MS * 4) barcodeBuffer.current = "";
+        if (gap > 200) barcodeBuffer.current = "";
         barcodeBuffer.current += e.key;
         return;
       }
 
-      // Es Enter — verificar si fue una ráfaga de scanner
-      if (isEnter && gap <= BURST_MS && barcodeBuffer.current.length >= MIN_CHARS) {
+      // Es Enter — verificar si fue una ráfaga de scanner.
+      // Dos condiciones para mayor compatibilidad con distintos modelos:
+      // 1. timing: gap ≤ BURST_MS (rápido entre último char y Enter)
+      // 2. longitud: exactamente 8 o 13 dígitos (EAN-8 / EAN-13)
+      const digitCount = barcodeBuffer.current.replace(/\D/g, "").length;
+      const isBarcode  = gap <= BURST_MS || digitCount === 8 || digitCount === 13;
+      if (isEnter && isBarcode && barcodeBuffer.current.length >= MIN_CHARS) {
         const code = barcodeBuffer.current.trim();
         barcodeBuffer.current = "";
 
