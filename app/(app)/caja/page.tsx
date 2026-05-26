@@ -380,33 +380,33 @@ export default function CajaPage() {
       barcodeLastKeyAt.current = now;
 
       if (isPrintable) {
-        // Si el gap es demasiado grande, resetear el buffer (tipeo humano pausado)
         if (gap > 200) barcodeBuffer.current = "";
         barcodeBuffer.current += e.key;
+        console.log("[scanner] char:", e.key, "| buffer:", barcodeBuffer.current, "| gap:", gap, "ms");
         return;
       }
 
-      // Es Enter — verificar si fue una ráfaga de scanner.
-      // Dos condiciones para mayor compatibilidad con distintos modelos:
-      // 1. timing: gap ≤ BURST_MS (rápido entre último char y Enter)
-      // 2. longitud: exactamente 8 o 13 dígitos (EAN-8 / EAN-13)
       const digitCount = barcodeBuffer.current.replace(/\D/g, "").length;
       const isBarcode  = gap <= BURST_MS || digitCount >= 8;
+      console.log("[scanner] ENTER | gap:", gap, "ms | buffer:", barcodeBuffer.current, "| digitCount:", digitCount, "| isBarcode:", isBarcode);
+
       if (isEnter && isBarcode && barcodeBuffer.current.length >= MIN_CHARS) {
         const code = barcodeBuffer.current.trim();
         barcodeBuffer.current = "";
 
         e.preventDefault();
 
-        // Limpiar el input (el scanner pudo haber tipeado el código ahí)
+        console.log("[scanner] ✅ código detectado:", code);
+
         setQuery("");
         setDropOpen(false);
 
-        // Buscar coincidencia exacta por SKU primero
         const cat = catalogRef.current;
+        console.log("[scanner] catálogo tiene", cat.length, "productos");
         const exact = cat.find(
           (p) => (p.code ?? "").toLowerCase() === code.toLowerCase()
         );
+        console.log("[scanner] match exacto:", exact ?? "ninguno");
 
         if (exact) {
           // Coincidencia exacta → agregar al carrito directamente
