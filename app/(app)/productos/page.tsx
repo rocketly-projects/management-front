@@ -693,7 +693,7 @@ function ProductPanel({
     setBarcode(val);
     setLookupError(null);
     const digits = val.replace(/\D/g, "");
-    if (digits.length === 8 || digits.length === 13) {
+    if (digits.length === 13) {
       lookupBarcode(digits);
     }
   }
