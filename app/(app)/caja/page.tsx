@@ -391,12 +391,13 @@ export default function CajaPage() {
         const code = barcodeBuffer.current.trim();
         barcodeBuffer.current = "";
 
-        // Si el input ya tiene el foco con ese valor, no hacer nada extra
-        if (document.activeElement === searchRef.current) return;
-
         e.preventDefault();
 
-        // Buscar coincidencia exacta por SKU primero, luego parcial por nombre
+        // Limpiar el input (el scanner pudo haber tipeado el código ahí)
+        setQuery("");
+        setDropOpen(false);
+
+        // Buscar coincidencia exacta por SKU primero
         const cat = catalogRef.current;
         const exact = cat.find(
           (p) => (p.code ?? "").toLowerCase() === code.toLowerCase()
@@ -427,7 +428,7 @@ export default function CajaPage() {
                 }
               }
             } catch { /* ignorar errores de red */ }
-            // No encontrado en OFF → mostrar en el buscador
+            // No encontrado en OFF ni en catálogo → mostrar en buscador
             setQuery(code);
             setDropOpen(true);
             setFocusedIdx(0);
