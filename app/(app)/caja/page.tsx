@@ -5,6 +5,7 @@ import { useProductosStore } from "@/lib/store/productosStore";
 import { useCajaStore } from "@/lib/store/cajaStore";
 import { useAuthStore } from "@/lib/store/authStore";
 import { createVenta } from "@/lib/api/ventas";
+import { createProducto } from "@/lib/api/productos";
 import { getTicket, imprimirTicket } from "@/lib/api/tickets";
 import type { TicketData, ImprimirConfig } from "@/lib/api/tickets";
 import { descargarTicketPdf, whatsappTicketUrl, mailtoTicketUrl } from "@/lib/utils/ticket-pdf";
@@ -128,6 +129,11 @@ export default function CajaPage() {
   const [focusedIdx, setFocusedIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Barcode scanner buffer
+  const barcodeBuffer    = useRef<string>("");
+  const barcodeLastKeyAt = useRef<number>(0);
+  const barcodeTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Cliente state
   const [selectedCliente, setSelectedCliente] = useState<ClienteConDeuda | null>(null);
   const [clienteQuery, setClienteQuery] = useState("");
@@ -137,6 +143,14 @@ export default function CajaPage() {
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const clienteSearchRef = useRef<HTMLInputElement>(null);
   const debouncedClienteQuery = useDebouncedValue(clienteQuery, 250);
+
+  // Nuevo producto desde barcode (no encontrado en catálogo, buscado en Open Food Facts)
+  const [nuevoProductoOpen, setNuevoProductoOpen] = useState(false);
+  const [nuevoProductoScan, setNuevoProductoScan] = useState<{
+    sku: string; nombre: string; marca: string; imagen: string;
+  } | null>(null);
+  const nuevoProductoOpenRef = useRef(false);
+  useEffect(() => { nuevoProductoOpenRef.current = nuevoProductoOpen; }, [nuevoProductoOpen]);
 
   // Fetch matching clientes (with deuda) when the debounced query changes
   useEffect(() => {
@@ -337,6 +351,117 @@ export default function CajaPage() {
     setTimeout(() => searchRef.current?.focus(), 100);
   }
 
+  /* ── Barcode scanner ────────────────────────────────────── */
+  // Las pistolas USB HID tipean caracteres muy rápido (<50 ms entre teclas)
+  // y terminan con Enter. Detectamos esa "ráfaga" y la redirigimos al buscador
+  // sin importar qué elemento tenga el foco en ese momento.
+
+  const catalogRef    = useRef(catalog);
+  const addToCartRef  = useRef(addToCart);
+  const modalRef      = useRef(modal);
+  useEffect(() => { catalogRef.current   = catalog;    }, [catalog]);
+  useEffect(() => { addToCartRef.current = addToCart;  }, [addToCart]);
+  useEffect(() => { modalRef.current     = modal;      }, [modal]);
+
+  useEffect(() => {
+    // Las pistolas USB HID envían los caracteres con <50 ms entre teclas.
+    // Acumulamos en buffer y procesamos automáticamente 80 ms después del
+    // último carácter rápido — sin necesidad de que el scanner envíe Enter.
+    // Si el scanner sí envía Enter, procesamos inmediatamente al recibirlo.
+    const BURST_MS = 50;  // gap máximo entre chars para considerarlos del scanner
+    const WAIT_MS  = 80;  // ms a esperar tras el último char antes de auto-procesar
+
+    function processScan(code: string) {
+      const clean = code.trim();
+      if (!clean) return;
+
+      setQuery("");
+      setDropOpen(false);
+
+      const cat   = catalogRef.current;
+      const exact = cat.find((p) => (p.code ?? "").toLowerCase() === clean.toLowerCase());
+
+      if (exact) {
+        addToCartRef.current(exact);
+      } else {
+        void (async () => {
+          try {
+            const res = await fetch(
+              `https://world.openfoodfacts.org/api/v2/product/${clean}.json?fields=product_name,brands,image_front_url`
+            );
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === 1) {
+                const p = data.product;
+                setNuevoProductoScan({
+                  sku:    clean,
+                  nombre: p.product_name ?? "",
+                  marca:  p.brands        ?? "",
+                  imagen: p.image_front_url ?? "",
+                });
+                setNuevoProductoOpen(true);
+                return;
+              }
+            }
+          } catch { /* ignorar errores de red */ }
+          setNuevoProductoScan({ sku: clean, nombre: "", marca: "", imagen: "" });
+          setNuevoProductoOpen(true);
+        })();
+      }
+    }
+
+    function onBarcode(e: KeyboardEvent) {
+      if (modalRef.current || nuevoProductoOpenRef.current) return;
+
+      const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+      const isEnter     = e.key === "Enter";
+      if (!isPrintable && !isEnter) return;
+
+      const now = Date.now();
+      const gap = now - barcodeLastKeyAt.current;
+      barcodeLastKeyAt.current = now;
+
+      if (isEnter) {
+        // Si hay un timer pendiente, cancelarlo y procesar ya
+        if (barcodeTimer.current) {
+          clearTimeout(barcodeTimer.current);
+          barcodeTimer.current = null;
+        }
+        const code       = barcodeBuffer.current.trim();
+        const digitCount = code.replace(/\D/g, "").length;
+        barcodeBuffer.current = "";
+        if (digitCount >= 8) {
+          e.preventDefault();
+          processScan(code);
+        }
+        return;
+      }
+
+      // Carácter imprimible
+      if (gap > 200) barcodeBuffer.current = ""; // reset en pausa larga (tipeo humano)
+      barcodeBuffer.current += e.key;
+
+      // Solo armar el timer cuando el carácter llegó rápido (scanner burst)
+      if (gap < BURST_MS) {
+        if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+        barcodeTimer.current = setTimeout(() => {
+          barcodeTimer.current = null;
+          const code       = barcodeBuffer.current.trim();
+          barcodeBuffer.current = "";
+          const digitCount = code.replace(/\D/g, "").length;
+          if (digitCount >= 4) processScan(code);
+        }, WAIT_MS);
+      }
+    }
+
+    window.addEventListener("keydown", onBarcode, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onBarcode, { capture: true });
+      if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ── Keyboard ────────────────────────────────────────────── */
 
   useEffect(() => {
@@ -348,6 +473,10 @@ export default function CajaPage() {
       }
       if (quickCreateOpen) {
         if (e.key === "Escape") { setQuickCreateOpen(false); }
+        return;
+      }
+      if (nuevoProductoOpen) {
+        if (e.key === "Escape") { setNuevoProductoOpen(false); setNuevoProductoScan(null); }
         return;
       }
       const fMap: Record<string, PayMethod> = { F1:"efectivo", F2:"debito", F3:"credito", F4:"transf", F5:"mp" };
@@ -368,7 +497,7 @@ export default function CajaPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting, selectedCliente, quickCreateOpen]);
+  }, [cart, selectedRow, modal, total, method, cajaActiva, submitting, selectedCliente, quickCreateOpen, nuevoProductoOpen]);
 
   /* ── Search handlers ─────────────────────────────────────── */
 
@@ -859,6 +988,23 @@ export default function CajaPage() {
           }}
         />
       )}
+
+      {/* ── Nuevo producto desde barcode (Open Food Facts) ──── */}
+      {nuevoProductoOpen && nuevoProductoScan && (
+        <NuevoProductoCajaModal
+          sku={nuevoProductoScan.sku}
+          nombre={nuevoProductoScan.nombre}
+          marca={nuevoProductoScan.marca}
+          imagen={nuevoProductoScan.imagen}
+          onClose={() => { setNuevoProductoOpen(false); setNuevoProductoScan(null); }}
+          onCreated={(p) => {
+            fetchProductos();
+            addToCart(p);
+            setNuevoProductoOpen(false);
+            setNuevoProductoScan(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -978,6 +1124,206 @@ function ClienteSelector({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Nuevo producto desde barcode ──────────────────────────────── */
+
+function NuevoProductoCajaModal({
+  sku, nombre: nombreInit, marca: marcaInit, imagen: imagenInit,
+  onClose, onCreated,
+}: {
+  sku: string;
+  nombre: string;
+  marca: string;
+  imagen: string;
+  onClose: () => void;
+  onCreated: (p: CatalogItem) => void;
+}) {
+  const [nombre,    setNombre]    = useState(nombreInit);
+  const [marca,     setMarca]     = useState(marcaInit);
+  const [imagen,    setImagen]    = useState(imagenInit);
+  const [precio,    setPrecio]    = useState("");
+  const [costo,     setCosto]     = useState("");
+  const [stock,     setStock]     = useState("0");
+  const [categoria, setCategoria] = useState("Bebidas");
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!nombre.trim()) { setError("El nombre es requerido"); return; }
+    const precioNum = parseFloat(precio);
+    if (!precio || isNaN(precioNum) || precioNum <= 0) { setError("El precio es requerido"); return; }
+    setSaving(true); setError(null);
+    try {
+      const p = await createProducto({
+        nombre:    nombre.trim(),
+        marca:     marca.trim() || null,
+        imagen:    imagen.trim() || null,
+        sku:       sku || null,
+        precio:    precioNum,
+        costo:     costo ? parseFloat(costo) : null,
+        stock:     parseInt(stock) || 0,
+        categoria: categoria || null,
+        activo:    true,
+      });
+      onCreated({ id: p.id, name: p.nombre, cat: p.categoria, code: p.sku, price: p.precio, stock: p.stock });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Error al crear producto");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-[2px]"
+      onClick={() => !saving && onClose()}
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "fadeSlideIn .25s ease" }}
+      >
+        <div className="border-b border-card-border px-6 py-5">
+          <h2 className="text-[16px] font-bold text-foreground">Nuevo producto</h2>
+          <p className="mt-0.5 text-[12.5px] text-muted">
+            Código: <span className="font-mono font-semibold text-foreground">{sku}</span>
+          </p>
+        </div>
+
+        {!imagen && !nombre && !marca && (
+          <div className="flex items-center gap-3 border-b border-card-border bg-amber-50 px-6 py-3">
+            <span className="text-lg">🔍</span>
+            <p className="text-[12.5px] text-amber-800">
+              No encontramos este producto. Podés cargarlo rápidamente completando los datos.
+            </p>
+          </div>
+        )}
+
+        {(imagen || nombre || marca) && (
+          <div className="flex items-center gap-3 border-b border-card-border bg-accent/5 px-6 py-3">
+            {imagen && (
+              <img
+                src={imagen}
+                alt=""
+                className="h-14 w-14 flex-shrink-0 rounded-lg border border-card-border bg-white object-contain"
+              />
+            )}
+            <div>
+              <p className="text-[11.5px] font-semibold text-accent">Datos de Open Food Facts</p>
+              {nombre && <p className="text-[13px] font-bold text-foreground">{nombre}</p>}
+              {marca  && <p className="text-[12px] text-muted">{marca}</p>}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3 px-6 py-5">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">
+              Nombre <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">Marca</label>
+            <input
+              type="text"
+              value={marca}
+              onChange={(e) => setMarca(e.target.value)}
+              className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">
+                Precio <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                value={precio}
+                onChange={(e) => setPrecio(e.target.value)}
+                autoFocus
+                min={0}
+                step={0.01}
+                placeholder="0.00"
+                className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">Costo</label>
+              <input
+                type="number"
+                value={costo}
+                onChange={(e) => setCosto(e.target.value)}
+                min={0}
+                step={0.01}
+                placeholder="0.00"
+                className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">Stock</label>
+              <input
+                type="number"
+                value={stock}
+                onChange={(e) => setStock(e.target.value)}
+                min={0}
+                step={1}
+                className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold uppercase tracking-[.06em] text-foreground/60">Categoría</label>
+              <select
+                value={categoria}
+                onChange={(e) => setCategoria(e.target.value)}
+                className="h-9 w-full rounded-lg border border-card-border bg-white px-3 text-[13px] text-foreground outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              >
+                <option value="">Sin categoría</option>
+                <option>Bebidas</option>
+                <option>Golosinas</option>
+                <option>Tabaco</option>
+                <option>Almacén</option>
+                <option>Panadería</option>
+                <option>Lácteos</option>
+              </select>
+            </div>
+          </div>
+
+          {error && <p className="text-[12.5px] font-semibold text-red-600">{error}</p>}
+        </div>
+
+        <div className="flex gap-2 border-t border-card-border px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 rounded-lg border border-card-border bg-white py-2 text-sm font-semibold text-foreground hover:bg-gray-50 transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={saving || !nombre.trim() || !precio}
+            className="flex-1 rounded-lg bg-accent py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {saving ? "Guardando…" : "Guardar y agregar"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
