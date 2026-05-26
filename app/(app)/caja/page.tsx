@@ -1193,6 +1193,15 @@ function NuevoProductoCajaModal({
           </p>
         </div>
 
+        {!imagen && !nombre && !marca && (
+          <div className="flex items-center gap-3 border-b border-card-border bg-amber-50 px-6 py-3">
+            <span className="text-lg">🔍</span>
+            <p className="text-[12.5px] text-amber-800">
+              No encontramos este producto. Podés cargarlo rápidamente completando los datos.
+            </p>
+          </div>
+        )}
+
         {(imagen || nombre || marca) && (
           <div className="flex items-center gap-3 border-b border-card-border bg-accent/5 px-6 py-3">
             {imagen && (
