@@ -391,7 +391,7 @@ export default function CajaPage() {
       // 1. timing: gap ≤ BURST_MS (rápido entre último char y Enter)
       // 2. longitud: exactamente 8 o 13 dígitos (EAN-8 / EAN-13)
       const digitCount = barcodeBuffer.current.replace(/\D/g, "").length;
-      const isBarcode  = gap <= BURST_MS || digitCount === 8 || digitCount === 13;
+      const isBarcode  = gap <= BURST_MS || digitCount >= 8;
       if (isEnter && isBarcode && barcodeBuffer.current.length >= MIN_CHARS) {
         const code = barcodeBuffer.current.trim();
         barcodeBuffer.current = "";
