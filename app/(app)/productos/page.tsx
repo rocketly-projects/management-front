@@ -66,7 +66,14 @@ export default function ProductosPage() {
   const [panel, setPanel]               = useState<{ open: boolean; product: Producto | null }>({ open: false, product: null });
   const [bulkModal, setBulkModal]       = useState(false);
   const [actionError, setActionError]   = useState<string | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  const searchRef       = useRef<HTMLInputElement>(null);
+  const panelOpenRef    = useRef(false);
+  const barcodeBuffer   = useRef("");
+  const barcodeLastKey  = useRef(0);
+  const barcodeTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { panelOpenRef.current = panel.open; }, [panel.open]);
 
   useEffect(() => {
     if (productos.length === 0 && !loading) store.fetch();
@@ -83,6 +90,60 @@ export default function ProductosPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Global barcode scanner listener (igual que en Caja)
+  useEffect(() => {
+    const BURST_MS = 50;
+    const WAIT_MS  = 80;
+
+    function onBarcode(e: KeyboardEvent) {
+      // Si el panel ya está abierto, dejar que el panel lo maneje
+      if (panelOpenRef.current) return;
+
+      const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+      const isEnter     = e.key === "Enter";
+      if (!isPrintable && !isEnter) return;
+
+      const now = Date.now();
+      const gap = now - barcodeLastKey.current;
+      barcodeLastKey.current = now;
+
+      if (isEnter) {
+        if (barcodeTimer.current) { clearTimeout(barcodeTimer.current); barcodeTimer.current = null; }
+        const code       = barcodeBuffer.current.trim();
+        barcodeBuffer.current = "";
+        if (code.replace(/\D/g, "").length >= 8) {
+          e.preventDefault();
+          setPendingBarcode(code);
+          setPanel({ open: true, product: null });
+        }
+        return;
+      }
+
+      if (gap > 200) barcodeBuffer.current = "";
+      barcodeBuffer.current += e.key;
+
+      if (gap < BURST_MS) {
+        if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+        barcodeTimer.current = setTimeout(() => {
+          barcodeTimer.current = null;
+          const code       = barcodeBuffer.current.trim();
+          barcodeBuffer.current = "";
+          if (code.replace(/\D/g, "").length >= 4) {
+            setPendingBarcode(code);
+            setPanel({ open: true, product: null });
+          }
+        }, WAIT_MS);
+      }
+    }
+
+    window.addEventListener("keydown", onBarcode, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onBarcode, { capture: true });
+      if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const visible = useMemo(() => {
@@ -449,8 +510,9 @@ export default function ProductosPage() {
                onClick={() => setPanel({ open: false, product: null })} />
           <ProductPanel
             product={panel.product}
+            initialBarcode={pendingBarcode ?? undefined}
             onSave={handleSavePanel}
-            onClose={() => setPanel({ open: false, product: null })}
+            onClose={() => { setPanel({ open: false, product: null }); setPendingBarcode(null); }}
           />
         </>
       )}
@@ -646,10 +708,12 @@ async function fetchOpenFoodFacts(barcode: string): Promise<{
 
 function ProductPanel({
   product,
+  initialBarcode,
   onSave,
   onClose,
 }: {
   product: Producto | null;
+  initialBarcode?: string;
   onSave: (data: Partial<Producto> & { id?: string }) => void;
   onClose: () => void;
 }) {
@@ -657,10 +721,16 @@ function ProductPanel({
   const [form, setForm]           = useState<Partial<Producto>>(product ?? EMPTY);
   const [saving, setSaving]       = useState(false);
   const [step, setStep]           = useState<"scan" | "form">(isNew ? "scan" : "form");
-  const [barcode, setBarcode]     = useState("");
+  const [barcode, setBarcode]     = useState(initialBarcode ?? "");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError]     = useState<string | null>(null);
   const [prefilled, setPrefilled] = useState(false);
+
+  // Si se recibió un barcode desde el scanner global, disparar lookup al montar
+  useEffect(() => {
+    if (initialBarcode) lookupBarcode(initialBarcode);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function set<K extends keyof Producto>(k: K, v: Producto[K]) {
     setForm((f) => ({ ...f, [k]: v }));
