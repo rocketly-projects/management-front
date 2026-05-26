@@ -128,6 +128,10 @@ export default function CajaPage() {
   const [focusedIdx, setFocusedIdx] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Barcode scanner buffer
+  const barcodeBuffer    = useRef<string>("");
+  const barcodeLastKeyAt = useRef<number>(0);
+
   // Cliente state
   const [selectedCliente, setSelectedCliente] = useState<ClienteConDeuda | null>(null);
   const [clienteQuery, setClienteQuery] = useState("");
@@ -336,6 +340,80 @@ export default function CajaPage() {
     setModal(null);
     setTimeout(() => searchRef.current?.focus(), 100);
   }
+
+  /* ── Barcode scanner ────────────────────────────────────── */
+  // Las pistolas USB HID tipean caracteres muy rápido (<50 ms entre teclas)
+  // y terminan con Enter. Detectamos esa "ráfaga" y la redirigimos al buscador
+  // sin importar qué elemento tenga el foco en ese momento.
+
+  const catalogRef    = useRef(catalog);
+  const addToCartRef  = useRef(addToCart);
+  const modalRef      = useRef(modal);
+  useEffect(() => { catalogRef.current   = catalog;    }, [catalog]);
+  useEffect(() => { addToCartRef.current = addToCart;  }, [addToCart]);
+  useEffect(() => { modalRef.current     = modal;      }, [modal]);
+
+  useEffect(() => {
+    const BURST_MS  = 50;  // intervalo máximo entre teclas para considerarlas parte del escaneo
+    const MIN_CHARS = 4;   // mínimo de caracteres para descartar pulsaciones accidentales
+
+    function onBarcode(e: KeyboardEvent) {
+      // No interceptar si hay un modal abierto
+      if (modalRef.current) return;
+
+      // Solo caracteres imprimibles (largo 1) + Enter
+      const isPrintable = e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+      const isEnter     = e.key === "Enter";
+      if (!isPrintable && !isEnter) return;
+
+      const now = Date.now();
+      const gap = now - barcodeLastKeyAt.current;
+      barcodeLastKeyAt.current = now;
+
+      if (isPrintable) {
+        // Si el gap es demasiado grande, resetear el buffer (tipeo humano pausado)
+        if (gap > BURST_MS * 4) barcodeBuffer.current = "";
+        barcodeBuffer.current += e.key;
+        return;
+      }
+
+      // Es Enter — verificar si fue una ráfaga de scanner
+      if (isEnter && gap <= BURST_MS && barcodeBuffer.current.length >= MIN_CHARS) {
+        const code = barcodeBuffer.current.trim();
+        barcodeBuffer.current = "";
+
+        // Si el input ya tiene el foco con ese valor, no hacer nada extra
+        if (document.activeElement === searchRef.current) return;
+
+        e.preventDefault();
+
+        // Buscar coincidencia exacta por SKU primero, luego parcial por nombre
+        const cat = catalogRef.current;
+        const exact = cat.find(
+          (p) => (p.code ?? "").toLowerCase() === code.toLowerCase()
+        );
+
+        if (exact) {
+          // Coincidencia exacta → agregar al carrito directamente
+          addToCartRef.current(exact);
+        } else {
+          // Sin coincidencia exacta → mostrar en el buscador para que el cajero confirme
+          setQuery(code);
+          setDropOpen(true);
+          setFocusedIdx(0);
+          searchRef.current?.focus();
+        }
+      } else {
+        // Enter que no es de scanner → limpiar buffer
+        barcodeBuffer.current = "";
+      }
+    }
+
+    window.addEventListener("keydown", onBarcode, { capture: true });
+    return () => window.removeEventListener("keydown", onBarcode, { capture: true });
+  // Solo se monta/desmonta una vez — los refs se mantienen actualizados
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ── Keyboard ────────────────────────────────────────────── */
 
